@@ -1,0 +1,61 @@
+{
+  "name": "dsh-session-delete",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Delete a conversation from the DSH sidebar instead of only archiving it. / 在会话菜单里真正删除会话，而不只是归档。",
+  "license": "MIT",
+  "author": "Lzcdebear",
+  "icon": "./icon.svg",
+  "meta": {
+    "title": "会话删除 / Session Delete",
+    "description": "会话「⋯」菜单里多一项「删除会话」：删掉该会话的日志文件、子会话日志、工程记录与投影缓存，不只是把它归档隐藏。"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "session",
+    "conversation",
+    "delete",
+    "archive"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lzcdebear/dsh-delete-session.git"
+  },
+  "homepage": "https://github.com/Lzcdebear/dsh-delete-session#readme",
+  "bugs": {
+    "url": "https://github.com/Lzcdebear/dsh-delete-session/issues"
+  },
+  "exports": {
+    ".": "./host.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test test/host.test.mjs"
+  },
+  "files": [
+    "host.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ]
+}

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Delete conversation">
+  <path d="M4 6.5h16" />
+  <path d="M9.5 6.5V4.9c0-.8.6-1.4 1.4-1.4h2.2c.8 0 1.4.6 1.4 1.4v1.6" />
+  <path d="M6.6 6.5l.9 12.2c.06.9.8 1.6 1.7 1.6h5.6c.9 0 1.64-.7 1.7-1.6l.9-12.2" />
+  <path d="M10.4 10.5v6.4M13.6 10.5v6.4" />
+</svg>
