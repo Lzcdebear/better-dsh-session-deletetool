@@ -47,7 +47,10 @@ window.__ModuleLoader__.load({
         'dialog.runningHint': '确认后会先停掉这些工作，再删除这个会话。',
         'dialog.open': '它当前仍被 Harness 占用（可能开在某个窗口或标签里）。删除后它会立刻从列表消失。',
         'dialog.unknown': '读不到它的当前状态，仍可直接删除。',
-        'dialog.descendants': '它派生出的 {n} 个子会话（子智能体）日志会一并删除。',
+        'dialog.descendants': '会连同它一起删除：{list}。',
+        'dialog.descendants.subagents': '{n} 个子智能体会话',
+        'dialog.descendants.derived': '{n} 个由它派生（fork）出来的对话',
+        'dialog.listSeparator': '、',
       },
       en: {
         'menu.delete': 'Delete conversation',
@@ -64,7 +67,10 @@ window.__ModuleLoader__.load({
         'dialog.runningHint': 'Confirming stops that work first, then deletes the conversation.',
         'dialog.open': 'The Harness still holds it open (it may be showing in a window or tab). Deleting removes it from the list at once.',
         'dialog.unknown': 'Its current state could not be read; deleting is still possible.',
-        'dialog.descendants': 'The {n} subagent conversations it spawned are deleted with it.',
+        'dialog.descendants': 'Deleted together with it: {list}.',
+        'dialog.descendants.subagents': '{n} subagent conversation(s)',
+        'dialog.descendants.derived': '{n} conversation(s) forked off it',
+        'dialog.listSeparator': ', ',
       },
     }
 
@@ -134,6 +140,23 @@ window.__ModuleLoader__.load({
       const payload = await response.json().catch(() => null)
       if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
       return payload
+    }
+
+    /**
+     * The dialog's "goes with it" line: which kinds of descendant follow this
+     * delete, so deleting a family is never silent. Null when there are none.
+     */
+    function descendantsText(info) {
+      const counts = info === null || info.descendants === undefined ? null : info.descendants
+      if (counts === null) return null
+      const parts = []
+      if (typeof counts.subagents === 'number' && counts.subagents > 0) {
+        parts.push(t('dialog.descendants.subagents', { n: counts.subagents }))
+      }
+      if (typeof counts.derived === 'number' && counts.derived > 0) {
+        parts.push(t('dialog.descendants.derived', { n: counts.derived }))
+      }
+      return parts.length === 0 ? null : parts.join(t('dialog.listSeparator'))
     }
 
     // ---- the menu row -------------------------------------------------------
@@ -262,9 +285,7 @@ window.__ModuleLoader__.load({
       const title = request.title === undefined || request.title === '' ? t('dialog.untitled') : request.title
       const info = state.info
       const activity = info === null || !Array.isArray(info.activity) ? [] : info.activity
-      const descendants = info === null || info.descendants === undefined || typeof info.descendants.count !== 'number'
-        ? 0
-        : info.descendants.count
+      const descendants = descendantsText(info)
       const checking = state.phase === 'checking'
       const confirmLabel = state.busy || checking
         ? (checking ? t('dialog.checking') : t('dialog.deleting'))
@@ -309,9 +330,9 @@ window.__ModuleLoader__.load({
           state.phase === 'ready' && info === null
             ? h('p', { className: 'dsd-note', key: 'unknown', children: t('dialog.unknown') })
             : null,
-          descendants === 0
+          descendants === null
             ? null
-            : h('p', { className: 'dsd-note dsd-descendants', key: 'descendants', children: t('dialog.descendants', { n: descendants }) }),
+            : h('p', { className: 'dsd-note dsd-descendants', key: 'descendants', children: t('dialog.descendants', { list: descendants }) }),
           state.error === null
             ? null
             : h('p', { className: 'dsd-error', key: 'error', children: `${t('dialog.failed')}：${state.error}` }),

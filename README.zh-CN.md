@@ -19,12 +19,12 @@ DSH 只能**归档**会话：归档把那一行从侧边栏隐藏，工件一样
 对选中的会话，宿主半会：
 
 1. **删掉会话工件目录** —— 当前日志、保留的每一代历史格式、以及目录里的会话本地文件（路径由 `ctx.sessionPersistence.locate(header)` 给出）；
-2. **删掉它的子会话** —— 子智能体是各自独立的 session，各有各的日志。整棵子树取自持久化的 `subagentCatalog` 投影（`ctx.subagents.listDescendants`），**从最深的往下删**。子树在动手之前先收集完，超过 200 个就整体中止、什么都不删；
+2. **删掉它的子会话** —— 子会话是各自独立的 session，各有各的日志。DSH 把每个子会话的父 id 记在它自己的 header 里（`SessionHeader.parentSession`），而且两种关系都写这个字段：子智能体由运行时写入并带 `origin: 'subagent'`，fork 出来的对话写入并带 `isSeeded`。插件按这条血缘广度优先遍历，再与持久化的 `subagentCatalog` 投影（`ctx.subagents.listDescendants`）取并集，因此连 header 已经读不出来的子会话也能被点名。删除**从最深的往下**，集合在动手之前先收集完，超过 200 个就整体中止、什么都不删；
 3. **摘掉工程记录** —— 该 id 从每个 Workspace 记录的 `sessionIds` 里移除（`Workspace.detachSession`），并从注册表全局的归档集合、置顶集合里移除；
 4. **删掉投影缓存** —— `session_projcache` 域里的记录和磁盘上对应的 `<id>.json`；
 5. **通知页面** —— 每个被删的 id 各发一次 `api-session/removed`，这是官方会话控制器销毁会话时发的同一个事件，侧边栏的行会立刻消失。
 
-分叉（fork）出来的会话**不会被动**：fork 是独立 session，不在子智能体名册里，删原会话不会带走它。
+子会话按类型分别标注，确认框会先把两种数量都写出来：**N 个子智能体会话**（它派生的）和 **N 个由它派生（fork）出来的对话**。fork 出来的对话本身也是独立会话，所以删源会话会连带删掉从它分出去的那些；正因为这一步影响大，数量是明写出来的，不会静默执行。
 
 ### 什么会拦，什么不会
 
@@ -103,8 +103,8 @@ https://github.com/Lzcdebear/dsh-delete-session/archive/refs/heads/main.tar.gz
 
 | 路由 | 方法 | 作用 |
 |---|---|---|
-| `/dsh-session-delete/inspect?sessionId=…` | GET | 返回 `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `descendants`（`{ count, ids }`） |
-| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop? }`；返回 `removed`、`descendants`、`stoppedActivity`、`runtime`、`activity` |
+| `/dsh-session-delete/inspect?sessionId=…` | GET | 返回 `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `descendants`（`{ count, subagents, derived, ids, capped }`） |
+| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop? }`；返回 `removed`、`descendants`（每条带 `kind`）、`stoppedActivity`、`runtime`、`activity` |
 
 两条路由各自带同源校验：`Host` 必须是环回、`sec-fetch-site` 不能是 `cross-site`、`Origin` 存在时必须与 `Host` 同源。别的网站页面打不进来。
 

@@ -14,11 +14,15 @@
  * then emits `api-session/removed` so connected Clients drop the row — the same
  * event the shipped Session controller emits when a Session is disposed.
  *
- * Subagent descendants go with it: they are Sessions of their own with their own
- * logs, and the durable `subagentCatalog` projection (`ctx.subagents
- * .listDescendants`) names the whole subtree. They are removed deepest first,
- * and the subtree is collected before anything is deleted, so an over-cap
- * subtree aborts with nothing done.
+ * Descendants go with it. Every Session records its parent in its own header
+ * (`SessionHeader.parentSession`), and DSH writes that field for both relations:
+ * the Subagent runtime sets it with `origin: 'subagent'`, and a fork sets it with
+ * `isSeeded`. Walking it therefore takes the subagent sessions this one spawned
+ * and the conversations forked off it, and the durable `subagentCatalog`
+ * projection (`ctx.subagents.listDescendants`) is walked as a second source so a
+ * child whose own header no longer reads is still named. Descendants are removed
+ * deepest first, and the set is collected before anything is deleted, so an
+ * over-cap family aborts with nothing done.
  *
  * What may block a delete is RUNNING WORK, never mere residency. A Session the
  * Host still holds open (`ctx.sessions` / `ctx.agents`) is deleted anyway:
@@ -61,8 +65,11 @@ const ACTIVITY_LABELS = {
   schedule: '生效中的定时提醒',
 }
 
-/** How many subagent descendants one delete may take with it before it aborts. */
+/** How many descendant Sessions one delete may take with it before it aborts. */
 const MAX_DESCENDANTS = 200
+
+/** How deep the lineage walk may go; a guard against a hand-edited header cycle. */
+const MAX_LINEAGE_DEPTH = 64
 
 /** A refusal carrying the HTTP status, stable code, and details the Client reports. */
 class DeleteRefusal extends Error {
@@ -212,13 +219,15 @@ async function deleteSession(ctx, sessionId, options) {
     removal.stoppedActivity = true
   }
 
-  // Subagent descendants are Sessions of their own with their own logs, so the
-  // durable subagent catalog decides which ones go with this delete. Collected
+  // Descendants are Sessions of their own with their own logs: the subagent
+  // sessions this one spawned and the conversations forked off it. Collected
   // before anything is removed, so an over-cap subtree aborts with nothing done.
   const descendants = await collectDescendants(ctx, sessionId, removal)
   const removedDescendants = []
   for (const child of descendants) {
-    removedDescendants.push(await removeSession(ctx, child.id))
+    const report = await removeSession(ctx, child.id)
+    report.kind = child.kind
+    removedDescendants.push(report)
   }
 
   const removed = await removeSession(ctx, sessionId, { artifactDirectory })
@@ -287,36 +296,29 @@ async function removeSession(ctx, sessionId, known = {}) {
 }
 
 /**
- * Collect this Session's subagent descendants from the durable subagent catalog,
- * deepest first so no child outlives its parent.
+ * The kind labels a descendant can carry into the report and the dialog.
+ * `subagent` is a Session the Subagent runtime spawned (`origin: 'subagent'`);
+ * `derived` is any other child on the lineage, a conversation forked off this
+ * one, which DSH records as `parentSession` plus `isSeeded`.
+ */
+const DESCENDANT_KINDS = { subagent: 'subagent', derived: 'derived' }
+
+/**
+ * Gather every Session whose lineage descends from this one, from the two
+ * durable sources DSH keeps, deepest first so no child outlives its parent.
+ *
+ * The lineage is `SessionHeader.parentSession`: the Subagent runtime writes it
+ * with `origin: 'subagent'`, and a fork writes it with `isSeeded`, so walking it
+ * covers subagent sessions and forked conversations alike. The subagent catalog
+ * is walked as well, because it can still name a child whose own header no
+ * longer reads.
  * @param {object} ctx - Host Cordis context.
  * @param {string} sessionId - the Session whose descendants are wanted.
  * @param {object} removal - report being filled in.
- * @returns {Promise<Array<{ id: string, depth: number }>>} the descendants.
+ * @returns {Promise<Array<{ id: string, depth: number, kind: string }>>} the descendants.
  */
 async function collectDescendants(ctx, sessionId, removal) {
-  const subagents = ctx.get('subagents')
-  if (subagents === undefined || typeof subagents.listDescendants !== 'function') {
-    removal.warnings.push('subagents 服务不可用，子会话日志没有一并清理')
-    return []
-  }
-  let entries
-  try {
-    entries = await subagents.listDescendants(sessionId)
-  } catch (error) {
-    removal.warnings.push(`读取子会话列表失败，子会话日志没有清理：${messageOf(error)}`)
-    return []
-  }
-  if (!Array.isArray(entries)) return []
-
-  const seen = new Set([sessionId])
-  const collected = []
-  for (const entry of entries) {
-    const id = typeof entry?.id === 'string' ? entry.id : ''
-    if (id === '' || seen.has(id) || !SESSION_ID.test(id)) continue
-    seen.add(id)
-    collected.push({ id, depth: typeof entry?.depth === 'number' ? entry.depth : 1 })
-  }
+  const collected = await gatherDescendants(ctx, sessionId, removal.warnings)
   if (collected.length > MAX_DESCENDANTS) {
     throw new DeleteRefusal(
       409,
@@ -324,8 +326,99 @@ async function collectDescendants(ctx, sessionId, removal) {
       `这个会话派生了 ${collected.length} 个子会话，超过一次删除上限 ${MAX_DESCENDANTS} 个，已中止，没有删除任何东西。`,
     )
   }
-  collected.sort((left, right) => right.depth - left.depth)
   return collected
+}
+
+/**
+ * Read the descendant set without applying the delete cap, for the state report.
+ * @param {object} ctx - Host Cordis context.
+ * @param {string} sessionId - the Session whose descendants are wanted.
+ * @param {string[]} warnings - collector for recoverable failures.
+ * @returns {Promise<Array<{ id: string, depth: number, kind: string }>>} deepest first.
+ */
+async function gatherDescendants(ctx, sessionId, warnings) {
+  const collected = new Map()
+
+  /** One discovered child; the closest depth wins and a subagent label outranks a derived one. */
+  const add = (rawId, depth, kind) => {
+    if (typeof rawId !== 'string' || rawId === sessionId || !SESSION_ID.test(rawId)) return
+    const existing = collected.get(rawId)
+    if (existing === undefined) {
+      collected.set(rawId, { id: rawId, depth, kind })
+      return
+    }
+    existing.depth = Math.min(existing.depth, depth)
+    if (kind === DESCENDANT_KINDS.subagent) existing.kind = DESCENDANT_KINDS.subagent
+  }
+
+  // 1. The durable lineage every Session records in its own header.
+  const query = ctx.get('sessionQuery')
+  if (query === undefined || typeof query.listSessions !== 'function') {
+    warnings.push('sessionQuery 服务不可用，派生对话没有一并清理')
+  } else {
+    try {
+      walkLineage(await query.listSessions(), sessionId, add)
+    } catch (error) {
+      warnings.push(`读取会话血缘失败，派生对话没有清理：${messageOf(error)}`)
+    }
+  }
+
+  // 2. The durable subagent catalog, as a second source.
+  const subagents = ctx.get('subagents')
+  if (subagents === undefined || typeof subagents.listDescendants !== 'function') {
+    warnings.push('subagents 服务不可用，子智能体会话名册没有读到')
+  } else {
+    try {
+      const entries = await subagents.listDescendants(sessionId)
+      if (Array.isArray(entries)) {
+        for (const entry of entries) {
+          add(entry?.id, typeof entry?.depth === 'number' ? entry.depth : 1, DESCENDANT_KINDS.subagent)
+        }
+      }
+    } catch (error) {
+      warnings.push(`读取子智能体名册失败：${messageOf(error)}`)
+    }
+  }
+
+  const list = [...collected.values()]
+  list.sort((left, right) => right.depth - left.depth || left.id.localeCompare(right.id))
+  return list
+}
+
+/**
+ * Walk one lineage level at a time and label each child by its header `origin`.
+ *
+ * Breadth-first with a visited set and a depth cap: a hand-edited header could
+ * name a cycle, and DSH's own lineage walk has no guard against one.
+ * @param {object[]} records - the observed Session corpus.
+ * @param {string} rootId - the Session the walk starts from (never a descendant).
+ * @param {(id: string, depth: number, kind: string) => void} add - collector.
+ */
+function walkLineage(records, rootId, add) {
+  const childrenByParent = new Map()
+  for (const record of records) {
+    const header = record?.header
+    const parent = typeof header?.parentSession === 'string' ? header.parentSession : undefined
+    if (parent === undefined || typeof header?.id !== 'string') continue
+    const children = childrenByParent.get(parent) ?? []
+    children.push(header)
+    childrenByParent.set(parent, children)
+  }
+
+  const seen = new Set([rootId])
+  let frontier = [rootId]
+  for (let depth = 1; frontier.length > 0 && depth <= MAX_LINEAGE_DEPTH; depth += 1) {
+    const next = []
+    for (const parentId of frontier) {
+      for (const header of childrenByParent.get(parentId) ?? []) {
+        if (seen.has(header.id)) continue
+        seen.add(header.id)
+        add(header.id, depth, header.origin === 'subagent' ? DESCENDANT_KINDS.subagent : DESCENDANT_KINDS.derived)
+        next.push(header.id)
+      }
+    }
+    frontier = next
+  }
 }
 
 /**
@@ -340,7 +433,8 @@ async function inspectSession(ctx, sessionId) {
     ? undefined
     : await persistence.stat(sessionId)
   const header = snapshot?.header
-  const descendantIds = await descendantIdsOf(ctx, sessionId)
+  const descendants = await gatherDescendants(ctx, sessionId, [])
+  const subagents = descendants.filter((entry) => entry.kind === DESCENDANT_KINDS.subagent).length
   return {
     ok: true,
     sessionId,
@@ -348,31 +442,13 @@ async function inspectSession(ctx, sessionId) {
     artifactDirectory: header === undefined ? undefined : locateDirectory(persistence, header),
     ...runtimeOf(ctx, sessionId),
     activity: describeActivity(await sessionActivity(ctx, sessionId)),
-    descendants: { count: descendantIds.length, ids: descendantIds.slice(0, 20) },
-  }
-}
-
-/**
- * The ids that would go with this Session, for the dialog's warning. Read-only:
- * an absent catalog or a failed read reports none rather than blocking a delete.
- * @param {object} ctx - Host Cordis context.
- * @param {string} sessionId - the Session whose descendants are wanted.
- * @returns {Promise<string[]>} descendant Session ids.
- */
-async function descendantIdsOf(ctx, sessionId) {
-  const subagents = ctx.get('subagents')
-  if (subagents === undefined || typeof subagents.listDescendants !== 'function') return []
-  try {
-    const entries = await subagents.listDescendants(sessionId)
-    if (!Array.isArray(entries)) return []
-    const seen = new Set()
-    for (const entry of entries) {
-      const id = typeof entry?.id === 'string' ? entry.id : ''
-      if (id !== '' && id !== sessionId && SESSION_ID.test(id)) seen.add(id)
-    }
-    return [...seen]
-  } catch {
-    return []
+    descendants: {
+      count: descendants.length,
+      subagents,
+      derived: descendants.length - subagents,
+      ids: descendants.slice(0, 20).map((entry) => entry.id),
+      capped: descendants.length > MAX_DESCENDANTS,
+    },
   }
 }
 

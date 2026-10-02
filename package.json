@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-delete",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Delete a conversation from the DSH sidebar instead of only archiving it. / 在会话菜单里真正删除会话，而不只是归档。",
   "license": "MIT",

@@ -26,10 +26,13 @@ For the chosen session, the Host half:
 1. **removes the session's artifact directory** — the current log, every retained historical format
    generation, and any session-local file in it (`ctx.sessionPersistence.locate(header)` gives the
    path);
-2. **removes its subagent descendants** — child sessions are sessions of their own with their own
-   logs. The whole subtree comes from the durable `subagentCatalog` projection
-   (`ctx.subagents.listDescendants`) and is deleted **deepest first**. The subtree is collected
-   *before* anything is removed, so a subtree over the 200-session cap aborts with nothing deleted;
+2. **removes its descendants** — child sessions are sessions of their own with their own logs. DSH
+   records every child in its parent's header (`SessionHeader.parentSession`), and writes that field
+   for both relations: the Subagent runtime sets it with `origin: 'subagent'`, a fork sets it with
+   `isSeeded`. The plugin walks that lineage breadth-first and unions it with the durable
+   `subagentCatalog` projection (`ctx.subagents.listDescendants`), so a child whose own header no
+   longer reads is still named. Descendants are deleted **deepest first**, collected *before*
+   anything is removed, so a family over the 200-session cap aborts with nothing deleted;
 3. **drops the workspace account** — the id leaves every Workspace record's `sessionIds`
    (`Workspace.detachSession`) and the registry-global archive and pin sets;
 4. **drops the projection checkpoint** — the `session_projcache` domain record and its `<id>.json`
@@ -37,8 +40,10 @@ For the chosen session, the Host half:
 5. **tells connected pages** — one `api-session/removed` per removed id, the same event the shipped
    Session controller emits when a Session is disposed, so the rows leave the sidebar immediately.
 
-Forked conversations are **not** touched: a fork is an independent session, it is not in the
-subagent catalog, so deleting the original never takes a fork with it.
+Descendants are labelled by kind, and the dialog names both counts before you confirm: *N subagent
+conversations* (spawned by this one) and *N conversations forked off it*. A fork is a conversation
+in its own right, so deleting a source deletes what was branched from it — which is exactly why the
+counts are stated rather than silently applied.
 
 ### What blocks a delete, and what does not
 
@@ -148,8 +153,8 @@ uses.
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/dsh-session-delete/inspect?sessionId=…` | GET | `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `descendants` (`{ count, ids }`) |
-| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop? }`; returns `removed`, `descendants`, `stoppedActivity`, `runtime`, `activity` |
+| `/dsh-session-delete/inspect?sessionId=…` | GET | `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `descendants` (`{ count, subagents, derived, ids, capped }`) |
+| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop? }`; returns `removed`, `descendants` (each with its `kind`), `stoppedActivity`, `runtime`, `activity` |
 
 Both routes carry their own same-origin gate: `Host` must be loopback, `sec-fetch-site` must not be
 `cross-site`, and a present `Origin` must match `Host`. Another site's page cannot reach them.

@@ -110,10 +110,30 @@ async function fakeArtifact(sessionId) {
   return directory
 }
 
-/** Host fakes for one existing Session, optionally with subagent descendants. */
-function servicesFor({ sessionId, directory, open = false, agent = undefined, children = [] }) {
+/**
+ * Host fakes for one existing Session, optionally with descendants.
+ *
+ * `children` feeds the durable subagent catalog. `lineage` feeds the observed
+ * Session corpus (`sessionQuery.listSessions`), whose headers carry
+ * `parentSession` / `origin` exactly as DSH writes them; `lineage: null` models a
+ * profile without the query service. `extraDirectories` gives artifact paths to
+ * descendants that only the lineage names.
+ */
+function servicesFor({
+  sessionId,
+  directory,
+  open = false,
+  agent = undefined,
+  children = [],
+  lineage = [],
+  extraDirectories = {},
+}) {
   const calls = { detached: 0, unarchived: 0, unpinned: 0, deleted: [] }
-  const directories = new Map([[sessionId, directory], ...children.map((child) => [child.id, child.directory])])
+  const directories = new Map([
+    [sessionId, directory],
+    ...children.map((child) => [child.id, child.directory]),
+    ...Object.entries(extraDirectories),
+  ])
   return {
     calls,
     sessionPersistence: {
@@ -126,6 +146,7 @@ function servicesFor({ sessionId, directory, open = false, agent = undefined, ch
     },
     sessions: { get: (id) => (open && id === sessionId ? { id } : undefined) },
     agents: { get: (id) => (agent !== undefined && id === sessionId ? agent : undefined) },
+    ...(lineage === null ? {} : { sessionQuery: { async listSessions() { return lineage } } }),
     subagents: {
       async listDescendants(id) {
         if (id !== sessionId) return []
@@ -258,7 +279,74 @@ test('inspect reports the state the page cannot see', async () => {
   assert.equal(response.payload.running, true)
   assert.equal(response.payload.artifactDirectory, directory)
   assert.deepEqual(response.payload.activity.map((entry) => entry.label), ['运行中的子智能体'])
-  assert.deepEqual(response.payload.descendants, { count: 0, ids: [] })
+  assert.deepEqual(response.payload.descendants, {
+    count: 0, subagents: 0, derived: 0, ids: [], capped: false,
+  })
+})
+
+test('takes forked conversations with it, from the header lineage', async () => {
+  const sessionId = 'session-77777777-8888-9999-aaaa-bbbbbbbbbbbb'
+  const forkId = 'session-fork01-0000-0000-0000-00000000000f'
+  const nestedForkId = 'session-fork02-0000-0000-0000-0000000000ff'
+  const directory = await fakeArtifact(sessionId)
+  const forkDirectory = await fakeArtifact(forkId)
+  const nestedForkDirectory = await fakeArtifact(nestedForkId)
+  const services = servicesFor({
+    sessionId,
+    directory,
+    extraDirectories: { [forkId]: forkDirectory, [nestedForkId]: nestedForkDirectory },
+    // A fork writes parentSession plus isSeeded and leaves origin unset — the
+    // shape that makes it invisible to the subagent catalog.
+    lineage: [
+      { header: { id: forkId, parentSession: sessionId, isSeeded: true, createdAt: 1 } },
+      { header: { id: nestedForkId, parentSession: forkId, isSeeded: true, createdAt: 2 } },
+      { header: { id: 'session-unrelated-0000-0000-0000-000000000000', cwd: 'x', createdAt: 3 } },
+    ],
+  })
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, DELETE, fakeRequest({ body: JSON.stringify({ sessionId }) }))
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.payload.descendants.map((entry) => [entry.sessionId, entry.kind]), [
+    [nestedForkId, 'derived'],
+    [forkId, 'derived'],
+  ])
+  await assert.rejects(stat(nestedForkDirectory), /ENOENT/)
+  await assert.rejects(stat(forkDirectory), /ENOENT/)
+  await assert.rejects(stat(directory), /ENOENT/)
+})
+
+test('labels both relations in the state report', async () => {
+  const sessionId = 'session-88888888-9999-aaaa-bbbb-cccccccccccc'
+  const subagentId = 'session-subag1-0000-0000-0000-0000000000a1'
+  const forkId = 'session-fork03-0000-0000-0000-0000000000f3'
+  const directory = await fakeArtifact(sessionId)
+  const subagentDirectory = await fakeArtifact(subagentId)
+  const forkDirectory = await fakeArtifact(forkId)
+  const services = servicesFor({
+    sessionId,
+    directory,
+    children: [{ id: subagentId, directory: subagentDirectory }],
+    extraDirectories: { [forkId]: forkDirectory },
+    lineage: [
+      { header: { id: subagentId, parentSession: sessionId, origin: 'subagent', createdAt: 1 } },
+      { header: { id: forkId, parentSession: sessionId, isSeeded: true, createdAt: 2 } },
+    ],
+  })
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, INSPECT, fakeRequest({
+    method: 'GET',
+    url: `${INSPECT}?sessionId=${sessionId}`,
+  }))
+
+  assert.equal(response.status, 200)
+  assert.equal(response.payload.descendants.count, 2)
+  assert.equal(response.payload.descendants.subagents, 1)
+  assert.equal(response.payload.descendants.derived, 1)
+  assert.equal(response.payload.descendants.capped, false)
+  assert.deepEqual([...response.payload.descendants.ids].sort(), [subagentId, forkId].sort())
 })
 
 test('inspect names the descendants a delete would take with it', async () => {
@@ -275,7 +363,9 @@ test('inspect names the descendants a delete would take with it', async () => {
   }))
 
   assert.equal(response.status, 200)
-  assert.deepEqual(response.payload.descendants, { count: 1, ids: [childId] })
+  assert.deepEqual(response.payload.descendants, {
+    count: 1, subagents: 1, derived: 0, ids: [childId], capped: false,
+  })
 })
 
 test('reports an unknown Session', async () => {

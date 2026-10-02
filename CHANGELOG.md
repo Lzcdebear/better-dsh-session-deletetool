@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0
+
+- **Forked conversations are deleted with their source.** A descendant is now read from the header
+  lineage every Session carries (`SessionHeader.parentSession`), which DSH writes for both
+  relations: the Subagent runtime sets it with `origin: 'subagent'`, and a fork sets it with
+  `isSeeded`. 0.1.0 walked only the subagent catalog, so a conversation forked off the deleted one
+  survived.
+- The confirmation dialog names what goes with the delete by kind — *N subagent conversations* and
+  *N conversations forked off it* — so deleting a family is never silent.
+- `/inspect` reports `descendants: { count, subagents, derived, ids, capped }`.
+- Each descendant report in the delete response carries its `kind` (`subagent` / `derived`).
+- The lineage walk is breadth-first with a visited set and a depth cap: DSH's own lineage traversal
+  has no guard against a hand-edited `parentSession` cycle.
+
 ## 0.1.0
 
 First release.
