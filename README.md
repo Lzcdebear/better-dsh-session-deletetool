@@ -26,32 +26,47 @@ For the chosen session, the Host half:
 1. **removes the session's artifact directory** — the current log, every retained historical format
    generation, and any session-local file in it (`ctx.sessionPersistence.locate(header)` gives the
    path);
-2. **removes its descendants** — child sessions are sessions of their own with their own logs. DSH
-   records every child in its parent's header (`SessionHeader.parentSession`), and writes that field
-   for both relations: the Subagent runtime sets it with `origin: 'subagent'`, a fork sets it with
-   `isSeeded`. The plugin walks that lineage breadth-first and unions it with the durable
-   `subagentCatalog` projection (`ctx.subagents.listDescendants`), so a child whose own header no
-   longer reads is still named. Descendants are deleted **deepest first**, collected *before*
-   anything is removed, so a family over the 200-session cap aborts with nothing deleted;
+2. **removes the descendants you selected** — child sessions are sessions of their own with their own
+   logs. DSH records every child in its parent's header (`SessionHeader.parentSession`), and writes
+   that field for every relation it creates: the Subagent runtime sets it with `origin: 'subagent'`,
+   a fork sets it with `isSeeded`, and Agent Teams resolves its roster through the same field. The
+   plugin walks that lineage breadth-first and unions it with the durable `subagentCatalog`
+   projection (`ctx.subagents.listDescendants`), so a child whose own header no longer reads is still
+   named. Descendants are deleted **deepest first**, gathered *before* anything is removed, and only
+   the ticked ones go — up to 200 per request;
 3. **drops the workspace account** — the id leaves every Workspace record's `sessionIds`
    (`Workspace.detachSession`) and the registry-global archive and pin sets;
 4. **drops the projection checkpoint** — the `session_projcache` domain record and its `<id>.json`
    file;
-5. **tells connected pages** — one `api-session/removed` per removed id, the same event the shipped
+5. **closes the shells the session owned** — `ctx.terminals` are part of no admission family, and the
+   service only reaps them when the Agent is released, which can be long after the log is gone;
+6. **tells connected pages** — one `api-session/removed` per removed id, the same event the shipped
    Session controller emits when a Session is disposed, so the rows leave the sidebar immediately.
 
-Descendants are labelled by kind, and the dialog names both counts before you confirm: *N subagent
-conversations* (spawned by this one) and *N conversations forked off it*. A fork is a conversation
-in its own right, so deleting a source deletes what was branched from it — which is exactly why the
-counts are stated rather than silently applied.
+### Choosing what goes with it
+
+The dialog lists the session's whole family rather than assuming all of it:
+
+- one **delete all** checkbox, with an indeterminate state when the selection is partial;
+- one collapsible group per relation — *subagent conversations* and *forked conversations*;
+- one checkbox per descendant, indented by lineage depth, labelled with its title and the tail of its
+  id, and badged when it is open or has unfinished work.
+
+Confirming posts exactly the ticked ids and the button states how many conversations will go.
+Unticked descendants survive as conversation roots. The selection is validated against the Host's own
+walk, so a request can only ever name Sessions in that lineage. A fork is a conversation in its own
+right, which is exactly why it is listed with a checkbox instead of being taken silently.
 
 ### What blocks a delete, and what does not
 
 **Running work blocks it — being open does not.** The gate is DSH's own archive admission, the
 `workspace/session-activity` waterfall: the Agent registry reports a running turn, the job registry
 reports background jobs, the Subagent runtime reports running descendants, Schedule reports active
-reminders. The dialog names what is still running and offers **Stop and delete**, which dispatches
-`workspace/session-stop` first — exactly what `archiveSession(id, { stopActivity: true })` does.
+reminders. The question is asked **once per Session in the delete set**, because the admission answers
+per Session: a descendant's running turn or background job is not reported when only the target is
+asked. The dialog names what is still running — on each row and in the summary — and offers
+**Stop and delete**, which dispatches `workspace/session-stop` for every busy Session first, exactly
+what `archiveSession(id, { stopActivity: true })` does.
 
 A session the Host still holds open (`ctx.sessions` / `ctx.agents`) is deleted anyway. Measured on
 Windows: `rm` succeeds while the append handle is open, the directory entry disappears at once, and
@@ -137,12 +152,15 @@ package name).
 
 ## Usage
 
-1. Open the `⋯` menu on any session row and pick **删除会话**.
+1. Open the `⋯` menu on any session row and pick **Delete conversation**.
 2. The dialog asks the Host for the session's real state and states it: what will be deleted,
-   whether the Harness still holds it open, what is still running, and how many subagent
-   conversations go with it.
-3. Confirm. If work is running, the button reads **停止并删除** and stops that work first.
-4. The row leaves the sidebar at once, and the data is gone from disk.
+   whether the Harness still holds it open, and what is still running.
+3. It then lists the family for you to choose from: a **delete all** checkbox, one collapsible group
+   per relation (subagent conversations, forked conversations), and one checkbox per descendant with
+   its title, id tail and state badge. Untick whatever you want to keep.
+4. Confirm. The button states how many conversations will go; if work is running it reads
+   **Stop and delete** and stops that work first.
+5. The rows leave the sidebar at once, and the data is gone from disk.
 
 ## HTTP surface
 
@@ -153,8 +171,8 @@ uses.
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/dsh-session-delete/inspect?sessionId=…` | GET | `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `descendants` (`{ count, subagents, derived, ids, capped }`) |
-| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop? }`; returns `removed`, `descendants` (each with its `kind`), `stoppedActivity`, `runtime`, `activity` |
+| `/dsh-session-delete/inspect?sessionId=…` | GET | `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory`, and `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }` where each item carries `id`, `kind`, `depth`, `parentId`, `title`, `open`, `agent`, `running` and its own `activity` |
+| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop?, descendants? }` — `descendants` omitted means the whole family, an empty array means the session alone; returns `removed`, `descendants` (each with its `kind`), `kept`, `stoppedActivity`, `terminalsKilled`, `warnings`, `runtime`, `activity`. A name outside the family is refused with `400 unknown-descendant` before anything is removed |
 
 Both routes carry their own same-origin gate: `Host` must be loopback, `sec-fetch-site` must not be
 `cross-site`, and a present `Origin` must match `Host`. Another site's page cannot reach them.

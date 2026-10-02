@@ -128,14 +128,28 @@ function servicesFor({
   lineage = [],
   extraDirectories = {},
 }) {
-  const calls = { detached: 0, unarchived: 0, unpinned: 0, deleted: [] }
+  const calls = { detached: 0, unarchived: 0, unpinned: 0, deleted: [], killedTerminals: [] }
   const directories = new Map([
     [sessionId, directory],
     ...children.map((child) => [child.id, child.directory]),
     ...Object.entries(extraDirectories),
   ])
+  const terminals = new Map()
   return {
     calls,
+    terminals: {
+      list: (owner) => [...(terminals.get(owner) ?? [])].map((id) => ({ sessionId: id, type: 'shell', status: 'running' })),
+      async kill(owner, id) {
+        calls.killedTerminals.push(id)
+        terminals.get(owner)?.delete(id)
+        return true
+      },
+      hasTerminal(owner, id) {
+        const set = terminals.get(owner) ?? new Set()
+        set.add(id)
+        terminals.set(owner, set)
+      },
+    },
     sessionPersistence: {
       async stat(id) {
         return directories.has(id) ? { header: { id, cwd: 'F:\\OneDrive\\Project_lzc' } } : undefined
@@ -146,7 +160,17 @@ function servicesFor({
     },
     sessions: { get: (id) => (open && id === sessionId ? { id } : undefined) },
     agents: { get: (id) => (agent !== undefined && id === sessionId ? agent : undefined) },
-    ...(lineage === null ? {} : { sessionQuery: { async listSessions() { return lineage } } }),
+    ...(lineage === null ? {} : {
+      sessionQuery: {
+        async listSessions() { return lineage },
+        async readTitleSnapshots(ids) {
+          return ids.map((id) => ({
+            status: 'fulfilled',
+            value: { session: { id }, title: `标题 ${id.slice(-4)}` },
+          }))
+        },
+      },
+    }),
     subagents: {
       async listDescendants(id) {
         if (id !== sessionId) return []
@@ -280,7 +304,7 @@ test('inspect reports the state the page cannot see', async () => {
   assert.equal(response.payload.artifactDirectory, directory)
   assert.deepEqual(response.payload.activity.map((entry) => entry.label), ['运行中的子智能体'])
   assert.deepEqual(response.payload.descendants, {
-    count: 0, subagents: 0, derived: 0, ids: [], capped: false,
+    count: 0, subagents: 0, derived: 0, truncated: false, maxDeletable: 200, items: [],
   })
 })
 
@@ -345,8 +369,14 @@ test('labels both relations in the state report', async () => {
   assert.equal(response.payload.descendants.count, 2)
   assert.equal(response.payload.descendants.subagents, 1)
   assert.equal(response.payload.descendants.derived, 1)
-  assert.equal(response.payload.descendants.capped, false)
-  assert.deepEqual([...response.payload.descendants.ids].sort(), [subagentId, forkId].sort())
+  assert.equal(response.payload.descendants.truncated, false)
+  assert.equal(response.payload.descendants.maxDeletable, 200)
+  assert.deepEqual(
+    response.payload.descendants.items.map((entry) => [entry.id, entry.kind, entry.parentId]).sort(),
+    [[subagentId, 'subagent', sessionId], [forkId, 'derived', sessionId]].sort(),
+  )
+  // Each row carries what the dialog shows beside the checkbox.
+  assert.deepEqual(response.payload.descendants.items.map((entry) => typeof entry.title), ['string', 'string'])
 })
 
 test('inspect names the descendants a delete would take with it', async () => {
@@ -364,7 +394,22 @@ test('inspect names the descendants a delete would take with it', async () => {
 
   assert.equal(response.status, 200)
   assert.deepEqual(response.payload.descendants, {
-    count: 1, subagents: 1, derived: 0, ids: [childId], capped: false,
+    count: 1,
+    subagents: 1,
+    derived: 0,
+    truncated: false,
+    maxDeletable: 200,
+    items: [{
+      id: childId,
+      kind: 'subagent',
+      depth: 1,
+      parentId: sessionId,
+      title: `标题 ${childId.slice(-4)}`,
+      open: false,
+      agent: false,
+      running: false,
+      activity: [],
+    }],
   })
 })
 
@@ -403,4 +448,122 @@ test('rejects a malformed id, a bad body, another method and another origin', as
   }))
   assert.equal(rebound.status, 403)
   assert.deepEqual(services.calls.deleted, [])
+})
+
+test('deletes only the descendants the Client selected', async () => {
+  const sessionId = 'session-99999999-aaaa-bbbb-cccc-dddddddddddd'
+  const keptId = 'session-keep01-0000-0000-0000-0000000000aa'
+  const takenId = 'session-take01-0000-0000-0000-0000000000bb'
+  const directory = await fakeArtifact(sessionId)
+  const keptDirectory = await fakeArtifact(keptId)
+  const takenDirectory = await fakeArtifact(takenId)
+  const services = servicesFor({
+    sessionId,
+    directory,
+    children: [
+      { id: keptId, directory: keptDirectory },
+      { id: takenId, directory: takenDirectory },
+    ],
+  })
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, DELETE, fakeRequest({
+    body: JSON.stringify({ sessionId, descendants: [takenId] }),
+  }))
+
+  assert.equal(response.status, 200)
+  assert.equal(response.payload.kept, 1)
+  assert.deepEqual(response.payload.descendants.map((entry) => entry.sessionId), [takenId])
+  await assert.rejects(stat(takenDirectory), /ENOENT/)
+  await assert.rejects(stat(directory), /ENOENT/)
+  // The one the user left ticked-off is untouched, log and all.
+  assert.equal((await stat(keptDirectory)).isDirectory(), true)
+  assert.deepEqual(state.emitted, [
+    ['api-session/removed', takenId],
+    ['api-session/removed', sessionId],
+  ])
+})
+
+test('refuses a descendant id that is not in the family', async () => {
+  const sessionId = 'session-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const childId = 'session-child4-0000-0000-0000-000000000004'
+  const outsiderId = 'session-outsid-0000-0000-0000-00000000000f'
+  const directory = await fakeArtifact(sessionId)
+  const childDirectory = await fakeArtifact(childId)
+  const outsiderDirectory = await fakeArtifact(outsiderId)
+  const services = servicesFor({
+    sessionId,
+    directory,
+    children: [{ id: childId, directory: childDirectory }],
+    extraDirectories: { [outsiderId]: outsiderDirectory },
+  })
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, DELETE, fakeRequest({
+    body: JSON.stringify({ sessionId, descendants: [childId, outsiderId] }),
+  }))
+
+  assert.equal(response.status, 400)
+  assert.equal(response.payload.code, 'unknown-descendant')
+  assert.equal(response.payload.sessionId, outsiderId)
+  // Nothing at all was removed, including the target.
+  assert.equal((await stat(directory)).isDirectory(), true)
+  assert.equal((await stat(childDirectory)).isDirectory(), true)
+  assert.equal((await stat(outsiderDirectory)).isDirectory(), true)
+  assert.deepEqual(state.emitted, [])
+})
+
+test('asks every Session in the set about its own work', async () => {
+  const sessionId = 'session-bbbbbbbb-cccc-dddd-eeee-ffffffffffff'
+  const busyChildId = 'session-busy01-0000-0000-0000-0000000000c1'
+  const idleChildId = 'session-idle01-0000-0000-0000-0000000000c2'
+  const directory = await fakeArtifact(sessionId)
+  const busyDirectory = await fakeArtifact(busyChildId)
+  const idleDirectory = await fakeArtifact(idleChildId)
+  const services = servicesFor({
+    sessionId,
+    directory,
+    children: [
+      { id: busyChildId, directory: busyDirectory },
+      { id: idleChildId, directory: idleDirectory },
+    ],
+  })
+  // Only the descendant is working: asking just the target would miss it.
+  const { state } = fakeContext({
+    services,
+    activity: (id) => (id === busyChildId ? [{ kind: 'job', items: [{ id: 'job-9', label: '长任务' }] }] : []),
+  })
+
+  const refused = await call(state, DELETE, fakeRequest({ body: JSON.stringify({ sessionId }) }))
+  assert.equal(refused.status, 409)
+  assert.equal(refused.payload.code, 'session-active')
+  assert.deepEqual(refused.payload.activeSessions.map((entry) => entry.sessionId), [busyChildId])
+  // The message names the families; the per-item labels ride along in the details.
+  assert.match(refused.payload.message, /运行中的后台任务/)
+  assert.equal(refused.payload.activeSessions[0].activity[0].items[0].label, '长任务')
+  assert.equal((await stat(busyDirectory)).isDirectory(), true)
+
+  const accepted = await call(state, DELETE, fakeRequest({ body: JSON.stringify({ sessionId, stop: true }) }))
+  assert.equal(accepted.status, 200)
+  assert.equal(accepted.payload.stoppedActivity, true)
+  assert.deepEqual(state.stopped, [busyChildId])
+  await assert.rejects(stat(busyDirectory), /ENOENT/)
+  await assert.rejects(stat(idleDirectory), /ENOENT/)
+})
+
+test('closes the shells a deleted Session owned', async () => {
+  const sessionId = 'session-cccccccc-dddd-eeee-ffff-000000000000'
+  const directory = await fakeArtifact(sessionId)
+  const agent = { status: 'inactive' }
+  const services = servicesFor({ sessionId, directory, agent })
+  services.terminals.hasTerminal(agent, 'term-1')
+  services.terminals.hasTerminal(agent, 'term-2')
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, DELETE, fakeRequest({ body: JSON.stringify({ sessionId }) }))
+
+  assert.equal(response.status, 200)
+  assert.equal(response.payload.terminalsKilled, 2)
+  assert.deepEqual(services.calls.killedTerminals.sort(), ['term-1', 'term-2'])
+  assert.deepEqual(services.terminals.list(agent), [])
 })

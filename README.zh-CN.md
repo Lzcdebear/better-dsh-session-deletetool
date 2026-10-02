@@ -19,16 +19,25 @@ DSH 只能**归档**会话：归档把那一行从侧边栏隐藏，工件一样
 对选中的会话，宿主半会：
 
 1. **删掉会话工件目录** —— 当前日志、保留的每一代历史格式、以及目录里的会话本地文件（路径由 `ctx.sessionPersistence.locate(header)` 给出）；
-2. **删掉它的子会话** —— 子会话是各自独立的 session，各有各的日志。DSH 把每个子会话的父 id 记在它自己的 header 里（`SessionHeader.parentSession`），而且两种关系都写这个字段：子智能体由运行时写入并带 `origin: 'subagent'`，fork 出来的对话写入并带 `isSeeded`。插件按这条血缘广度优先遍历，再与持久化的 `subagentCatalog` 投影（`ctx.subagents.listDescendants`）取并集，因此连 header 已经读不出来的子会话也能被点名。删除**从最深的往下**，集合在动手之前先收集完，超过 200 个就整体中止、什么都不删；
-3. **摘掉工程记录** —— 该 id 从每个 Workspace 记录的 `sessionIds` 里移除（`Workspace.detachSession`），并从注册表全局的归档集合、置顶集合里移除；
+2. **删掉你勾选的子会话** —— 子会话是各自独立的 session，各有各的日志。DSH 把每个子会话的父 id 记在它自己的 header 里（`SessionHeader.parentSession`），而且它创建的每种关系都写这个字段：子智能体由运行时写入并带 `origin: 'subagent'`，fork 出来的对话写入并带 `isSeeded`，Agent Teams 的名册也靠同一个字段解析。插件按这条血缘广度优先遍历，再与持久化的 `subagentCatalog` 投影（`ctx.subagents.listDescendants`）取并集，因此连 header 已经读不出来的子会话也能被点名。删除**从最深的往下**，集合在动手之前先收集完，一次最多删 200 个，而且只删勾上的那些；
+3. **摘掉工程记录** —— 每个 id 从每个 Workspace 记录的 `sessionIds` 里移除（`Workspace.detachSession`），并从注册表全局的归档集合、置顶集合里移除；
 4. **删掉投影缓存** —— `session_projcache` 域里的记录和磁盘上对应的 `<id>.json`；
-5. **通知页面** —— 每个被删的 id 各发一次 `api-session/removed`，这是官方会话控制器销毁会话时发的同一个事件，侧边栏的行会立刻消失。
+5. **关掉它拥有的终端** —— `ctx.terminals` 不属于任何一条准入族，服务要等 Agent 被释放才回收，而那时日志早就没了；
+6. **通知页面** —— 每个被删的 id 各发一次 `api-session/removed`，这是官方会话控制器销毁会话时发的同一个事件，侧边栏的行会立刻消失。
 
-子会话按类型分别标注，确认框会先把两种数量都写出来：**N 个子智能体会话**（它派生的）和 **N 个由它派生（fork）出来的对话**。fork 出来的对话本身也是独立会话，所以删源会话会连带删掉从它分出去的那些；正因为这一步影响大，数量是明写出来的，不会静默执行。
+### 选择删什么
+
+确认框会把整个家族列出来让你挑，而不是默认全带走：
+
+- 一个**删除全部**勾选框，部分选中时显示半选状态；
+- 每种关系一个**可折叠分组**：子智能体会话、派生对话（fork）；
+- 每个子会话一个勾选框，按血缘深度缩进，标出标题和 id 尾号，还开着的或还有工作没跑完的会带状态标记。
+
+确认时只提交勾上的 id，按钮上写着即将删掉几个会话。没勾的子会话会作为独立的会话根留下来。选择会在宿主侧拿它自己走出来的血缘做校验，请求只能点到这个家族里的会话。fork 出来的对话本身也是独立会话，所以它是"带勾选框列出来"，而不是被静默带走。
 
 ### 什么会拦，什么不会
 
-**只有"还有工作在跑"会拦，"还开着"不会。** 门槛用的是 DSH 自己归档时的那条 `workspace/session-activity` 瀑布：Agent 注册表报进行中的回合，后台任务注册表报后台任务，子智能体运行时报运行中的子会话，定时提醒报生效中的任务。确认框会写明还剩什么在跑，并提供**停止并删除**，先派发 `workspace/session-stop`——和 `archiveSession(id, { stopActivity: true })` 完全一致。
+**只有"还有工作在跑"会拦，"还开着"不会。** 门槛用的是 DSH 自己归档时的那条 `workspace/session-activity` 瀑布：Agent 注册表报进行中的回合，后台任务注册表报后台任务，子智能体运行时报运行中的子会话，定时提醒报生效中的任务。这个询问是**对删除集合里的每一个会话各问一次**，因为这条准入是按被问的会话作答的：只问目标的话，子会话正在跑的回合或后台任务根本不会出现。确认框会把还在跑的东西写在对应行上、也写在汇总里，并提供**停止并删除**——先对每个忙碌的会话派发一次 `workspace/session-stop`，和 `archiveSession(id, { stopActivity: true })` 完全一致。
 
 宿主内存里还持有这个会话（`ctx.sessions` / `ctx.agents`）时照样删。本机实测（Windows）：文件句柄还开着时 `rm` 依然成功，目录项立刻消失，之后的写入落进已删除的文件而不是把它复活。早先的版本会拒绝这种会话并提示"先切换到别的会话"，结果把没显示在窗口里的会话也一起误伤了，那条规则已经去掉。
 
@@ -93,9 +102,10 @@ https://github.com/Lzcdebear/dsh-delete-session/archive/refs/heads/main.tar.gz
 ## 用法
 
 1. 在任意会话行上点 `⋯`，选**删除会话**。
-2. 确认框先向宿主问一次真实状态，然后写清楚：会删掉什么、它是不是还被 Harness 占用、还剩什么在工作、会连带删掉几个子会话。
-3. 确认。如果还有在跑的工作，按钮会变成**停止并删除**，按下去先停掉那些工作。
-4. 那一行立刻从侧边栏消失，数据也从磁盘上没了。
+2. 确认框先向宿主问一次真实状态，写清楚：会删掉什么、它是不是还被 Harness 占用、还剩什么在工作。
+3. 接着把整个家族列出来让你挑：一个**删除全部**勾选框、每种关系一个可折叠分组（子智能体会话 / 派生对话）、每个子会话一个勾选框（带标题、id 尾号和状态标记）。不想删的把勾去掉。
+4. 确认。按钮上写着即将删掉几个会话；如果还有在跑的工作，按钮会变成**停止并删除**，按下去先停掉那些工作。
+5. 相关的行立刻从侧边栏消失，数据也从磁盘上没了。
 
 ## HTTP 接口
 
@@ -103,8 +113,8 @@ https://github.com/Lzcdebear/dsh-delete-session/archive/refs/heads/main.tar.gz
 
 | 路由 | 方法 | 作用 |
 |---|---|---|
-| `/dsh-session-delete/inspect?sessionId=…` | GET | 返回 `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `descendants`（`{ count, subagents, derived, ids, capped }`） |
-| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop? }`；返回 `removed`、`descendants`（每条带 `kind`）、`stoppedActivity`、`runtime`、`activity` |
+| `/dsh-session-delete/inspect?sessionId=…` | GET | 返回 `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory`，以及 `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }`，其中每项带 `id`、`kind`、`depth`、`parentId`、`title`、`open`、`agent`、`running` 和它自己的 `activity` |
+| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop?, descendants? }`——`descendants` 不传表示整个家族，传空数组表示只删它自己；返回 `removed`、`descendants`（每条带 `kind`）、`kept`、`stoppedActivity`、`terminalsKilled`、`warnings`、`runtime`、`activity`。点到的名字不在家族里会在动手之前就以 `400 unknown-descendant` 拒绝 |
 
 两条路由各自带同源校验：`Host` 必须是环回、`sec-fetch-site` 不能是 `cross-site`、`Origin` 存在时必须与 `Host` 同源。别的网站页面打不进来。
 

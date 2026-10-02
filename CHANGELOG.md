@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.2.1
+
+Deleting a conversation is a choice now, not a take-it-all.
+
+**Pick what goes with it.** The confirmation dialog lists the session's whole family and lets you
+choose:
+
+- one **delete all** checkbox, with an indeterminate state when the selection is partial;
+- one collapsible group per relation — *subagent conversations* and *forked conversations*;
+- one checkbox per descendant, indented by lineage depth, labelled with its title and the tail of its
+  id, and badged when it is open or still has work running.
+
+Confirming posts exactly the ticked ids, and the button states how many conversations will go.
+Unticked descendants survive as conversation roots.
+
+**The family is complete and the selection is validated.** Descendants come from the header lineage
+every Session carries (`SessionHeader.parentSession`) — which covers subagent sessions, forked
+conversations, and the child Sessions Agent Teams provisions — unioned with the durable
+`subagentCatalog` projection for children whose own header no longer reads. The Host validates the
+client's selection against its own walk, so a request can only ever name Sessions in that lineage
+(`400 unknown-descendant` otherwise). Omitting the field still means "all of them".
+
+**A gate bug, fixed.** Running work was only checked for the target Session, but DSH's archive
+admission answers per Session: a descendant's running turn or background job was invisible, so a child
+could be deleted mid-run. Every Session in the delete set is now asked, the refusal names each busy
+Session (`activeSessions` in the details, badges on the rows), and `stop: true` dispatches
+`workspace/session-stop` for all of them.
+
+**Shells no longer outlive their conversation.** Terminals belong to no admission family, and the
+service only reaps them when the Agent is released — which can be long after the log is gone. Each
+deleted Session's terminals are now closed, reported as `terminalsKilled`.
+
+**API.** `GET /inspect` answers with `descendants: { count, subagents, derived, truncated,
+maxDeletable, items[] }`, each item carrying `id`, `kind`, `depth`, `parentId`, `title`, `open`,
+`agent`, `running` and its own `activity`. `POST /delete` takes `{ sessionId, stop?, descendants? }`
+and answers with `kept`, `terminalsKilled` and `warnings` beside the per-Session reports. The
+request-body ceiling is 64 KiB so a few hundred ids fit, and the 200-per-request cap applies to the
+selection rather than to the whole family.
+
+**Audited, deliberately unchanged.** Attachment blobs stay (content-addressed and shared; the service
+has no reference counting), and the derived search index keeps reconciling itself.
+
 ## 0.2.0
 
 - **Forked conversations are deleted with their source.** A descendant is now read from the header

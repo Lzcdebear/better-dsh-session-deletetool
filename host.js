@@ -14,32 +14,40 @@
  * then emits `api-session/removed` so connected Clients drop the row — the same
  * event the shipped Session controller emits when a Session is disposed.
  *
- * Descendants go with it. Every Session records its parent in its own header
- * (`SessionHeader.parentSession`), and DSH writes that field for both relations:
- * the Subagent runtime sets it with `origin: 'subagent'`, and a fork sets it with
- * `isSeeded`. Walking it therefore takes the subagent sessions this one spawned
- * and the conversations forked off it, and the durable `subagentCatalog`
- * projection (`ctx.subagents.listDescendants`) is walked as a second source so a
- * child whose own header no longer reads is still named. Descendants are removed
- * deepest first, and the set is collected before anything is deleted, so an
- * over-cap family aborts with nothing done.
+ * Descendants are selected, not assumed. Every Session records its parent in its
+ * own header (`SessionHeader.parentSession`), and DSH writes that field for every
+ * relation it creates: the Subagent runtime sets it with `origin: 'subagent'`, a
+ * fork sets it with `isSeeded`, and Agent Teams resolves its roster through the
+ * same field. Walking it therefore reaches subagent sessions, conversations
+ * forked off this one, and the children a team provisions; the durable
+ * `subagentCatalog` projection (`ctx.subagents.listDescendants`) is walked as a
+ * second source so a child whose own header no longer reads is still named.
+ * `GET /inspect` returns that family as a list — id, kind, depth, parent, title,
+ * whether it is open, and what it is running — and `POST /delete` takes the ids
+ * the user ticked. The selection is validated against the Host's own walk, so a
+ * crafted request can only ever name Sessions in this lineage. Descendants are
+ * removed deepest first, and the family is gathered before anything is removed.
  *
- * What may block a delete is RUNNING WORK, never mere residency. A Session the
- * Host still holds open (`ctx.sessions` / `ctx.agents`) is deleted anyway:
- * measured on this platform, `rm` succeeds while the append handle is open, the
- * directory entry disappears at once, and later appends land in the unlinked
- * file instead of resurrecting it. The one real gate is DSH's own archive
- * admission — the `workspace/session-activity` waterfall the shipped archive
- * uses, answered by the Agent registry (a running turn), the job registry, the
- * Subagent runtime, and Schedule. Pass `stop: true` to stop that work first,
- * exactly as `archiveSession(id, { stopActivity: true })` does.
+ * What may block a delete is RUNNING WORK, never mere residency, and the question
+ * is asked once per Session in the delete set: the shipped admission answers for
+ * the Session it is asked about, so a descendant's running turn or background job
+ * would be invisible if only the target were asked. A Session the Host still holds
+ * open (`ctx.sessions` / `ctx.agents`) is deleted anyway: measured on this
+ * platform, `rm` succeeds while the append handle is open, the directory entry
+ * disappears at once, and later appends land in the unlinked file instead of
+ * resurrecting it. The gate itself is DSH's own archive admission — the
+ * `workspace/session-activity` waterfall the shipped archive uses, answered by the
+ * Agent registry (a running turn), the job registry, the Subagent runtime, and
+ * Schedule. Pass `stop: true` to stop that work first, exactly as
+ * `archiveSession(id, { stopActivity: true })` does. Each deleted Session's own
+ * shells are closed too: terminals belong to no admission family, and the service
+ * only reaps them once the Agent is released.
  *
  * The Client half reaches this half over two same-origin HTTP routes on
  * `ctx.webServer`, the transport the installed community plugin `dshmarket`
  * uses for its own UI→Host calls: a build-free plain-JavaScript bundle cannot
  * declare a typed `ctx.remote` namespace, because those need generated Typert
- * descriptors. `GET /inspect` lets the dialog state a Session's real state
- * before the user commits.
+ * descriptors.
  */
 import { rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -53,7 +61,12 @@ const INSPECT_PATH = '/dsh-session-delete/inspect'
 /** Session ids are opaque strings, but never paths: keep them to safe segments. */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
 
-const MAX_BODY_BYTES = 4096
+/**
+ * Request-body ceiling. The delete body carries the ticked descendant ids, and
+ * the cap it is validated against is MAX_DESCENDANTS, so this has to hold a few
+ * hundred of them.
+ */
+const MAX_BODY_BYTES = 65536
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
 
@@ -65,8 +78,11 @@ const ACTIVITY_LABELS = {
   schedule: '生效中的定时提醒',
 }
 
-/** How many descendant Sessions one delete may take with it before it aborts. */
+/** How many descendant Sessions one delete request may carry before it aborts. */
 const MAX_DESCENDANTS = 200
+
+/** How many descendants the state report lists for selection; beyond this only the count is shown. */
+const MAX_LISTED_DESCENDANTS = 300
 
 /** How deep the lineage walk may go; a guard against a hand-edited header cycle. */
 const MAX_LINEAGE_DEPTH = 64
@@ -138,7 +154,10 @@ async function serveDelete(ctx, request, response) {
     return
   }
   try {
-    send(response, 200, await deleteSession(ctx, sessionId, { stop: body?.stop === true }))
+    send(response, 200, await deleteSession(ctx, sessionId, {
+      stop: body?.stop === true,
+      descendants: body?.descendants,
+    }))
   } catch (error) {
     answer(ctx, response, error, sessionId)
   }
@@ -177,10 +196,13 @@ async function serveInspect(ctx, request, response) {
 }
 
 /**
- * Delete one stored Session and everything keyed by its id.
+ * Delete the Session the user acted on, the descendants they selected, and
+ * everything keyed by those ids.
  * @param {object} ctx - Host Cordis context.
- * @param {string} sessionId - the Session to delete.
- * @param {{ stop: boolean }} options - whether to stop running work first.
+ * @param {string} sessionId - the Session the user acted on.
+ * @param {{ stop: boolean, descendants?: string[] }} options - whether to stop
+ *   running work first, and which descendants to take; omitting `descendants`
+ *   means every one of them.
  * @returns {Promise<object>} the removal report.
  */
 async function deleteSession(ctx, sessionId, options) {
@@ -201,30 +223,53 @@ async function deleteSession(ctx, sessionId, options) {
   }
 
   const runtime = runtimeOf(ctx, sessionId)
-  const activity = describeActivity(await sessionActivity(ctx, sessionId))
-  if (activity.length > 0 && options.stop !== true) {
+  const removal = { stoppedActivity: false, warnings: [], terminalsKilled: 0 }
+
+  // The family is gathered first and the caller's selection is validated against
+  // it, so a crafted request can never name a Session outside this lineage.
+  const gathered = await gatherDescendants(ctx, sessionId, removal.warnings)
+  const selected = selectDescendants(gathered, options.descendants)
+  if (selected.length > MAX_DESCENDANTS) {
     throw new DeleteRefusal(
       409,
-      'session-active',
-      `这个会话还有未结束的工作（${activity.map((entry) => entry.label).join('、')}）。确认后会先停掉它们再删除。`,
-      { activity },
+      'too-many-descendants',
+      `一次最多删除 ${MAX_DESCENDANTS} 个子会话，当前选中 ${selected.length} 个，请分批删除。`,
     )
   }
 
-  const removal = { stoppedActivity: false, warnings: [] }
+  // Every Session in the set is asked about its own work. The shipped admission
+  // answers for the Session it is asked about, so a descendant's running turn or
+  // background job would be invisible if only the target were asked.
+  const targets = [sessionId, ...selected.map((entry) => entry.id)]
+  const busy = await gatherActivities(ctx, targets)
+  if (busy.size > 0 && options.stop !== true) {
+    const busyList = [...busy.entries()].map(([id, activity]) => ({ sessionId: id, activity }))
+    const labels = [...new Set(busyList.flatMap((entry) => entry.activity.map((item) => item.label)))].join('、')
+    throw new DeleteRefusal(
+      409,
+      'session-active',
+      busy.size === 1 && busy.has(sessionId)
+        ? `这个会话还有未结束的工作（${labels}）。确认后会先停掉它们再删除。`
+        : `选中的会话里还有未结束的工作（${labels}，共 ${busy.size} 个会话）。确认后会先停掉它们再删除。`,
+      { activity: busy.get(sessionId) ?? [], activeSessions: busyList },
+    )
+  }
 
   // Running work goes first, the way the shipped archive's stopActivity does.
-  if (activity.length > 0) {
-    await stopSessionActivity(ctx, sessionId, removal)
+  if (busy.size > 0) {
+    for (const id of busy.keys()) await stopSessionActivity(ctx, id, removal)
     removal.stoppedActivity = true
   }
 
-  // Descendants are Sessions of their own with their own logs: the subagent
-  // sessions this one spawned and the conversations forked off it. Collected
-  // before anything is removed, so an over-cap subtree aborts with nothing done.
-  const descendants = await collectDescendants(ctx, sessionId, removal)
+  // A deleted Session's shells go with it. Terminals are not part of the shipped
+  // archive admission, and the service's own owner cleanup only fires once the
+  // Agent is released, which can be long after the log is gone.
+  for (const id of targets) removal.terminalsKilled += await killOwnedTerminals(ctx, id, removal)
+
+  // Descendants are Sessions of their own with their own logs: deepest first, so
+  // no child outlives its parent by more than one call.
   const removedDescendants = []
-  for (const child of descendants) {
+  for (const child of selected) {
     const report = await removeSession(ctx, child.id)
     report.kind = child.kind
     removedDescendants.push(report)
@@ -237,9 +282,12 @@ async function deleteSession(ctx, sessionId, options) {
     sessionId,
     removed,
     descendants: removedDescendants,
+    kept: gathered.length - selected.length,
     stoppedActivity: removal.stoppedActivity,
+    terminalsKilled: removal.terminalsKilled,
+    warnings: removal.warnings,
     runtime,
-    activity,
+    activity: busy.get(sessionId) ?? [],
   }
 }
 
@@ -304,29 +352,59 @@ async function removeSession(ctx, sessionId, known = {}) {
 const DESCENDANT_KINDS = { subagent: 'subagent', derived: 'derived' }
 
 /**
- * Gather every Session whose lineage descends from this one, from the two
- * durable sources DSH keeps, deepest first so no child outlives its parent.
+ * Turn a caller's selection into the descendant entries to delete.
  *
- * The lineage is `SessionHeader.parentSession`: the Subagent runtime writes it
- * with `origin: 'subagent'`, and a fork writes it with `isSeeded`, so walking it
- * covers subagent sessions and forked conversations alike. The subagent catalog
- * is walked as well, because it can still name a child whose own header no
- * longer reads.
- * @param {object} ctx - Host Cordis context.
- * @param {string} sessionId - the Session whose descendants are wanted.
- * @param {object} removal - report being filled in.
- * @returns {Promise<Array<{ id: string, depth: number, kind: string }>>} the descendants.
+ * The selection is validated against the lineage the Host itself gathered, so a
+ * crafted request can only ever name Sessions in this family. An omitted field
+ * means "all of them"; an empty array means "only the Session itself".
+ * @param {Array<{ id: string, depth: number, kind: string }>} gathered - the family.
+ * @param {unknown} requested - the ids the Client sent, when it sent any.
+ * @returns {Array<{ id: string, depth: number, kind: string }>} deepest first.
  */
-async function collectDescendants(ctx, sessionId, removal) {
-  const collected = await gatherDescendants(ctx, sessionId, removal.warnings)
-  if (collected.length > MAX_DESCENDANTS) {
-    throw new DeleteRefusal(
-      409,
-      'too-many-descendants',
-      `这个会话派生了 ${collected.length} 个子会话，超过一次删除上限 ${MAX_DESCENDANTS} 个，已中止，没有删除任何东西。`,
-    )
+function selectDescendants(gathered, requested) {
+  if (requested === undefined || requested === null) return gathered
+  if (!Array.isArray(requested)) {
+    throw new DeleteRefusal(400, 'bad-request', 'descendants 必须是会话 id 数组。')
   }
-  return collected
+  const byId = new Map(gathered.map((entry) => [entry.id, entry]))
+  const seen = new Set()
+  const selected = []
+  for (const raw of requested) {
+    const id = typeof raw === 'string' ? raw.trim() : ''
+    if (id === '' || seen.has(id)) continue
+    const entry = byId.get(id)
+    if (entry === undefined) {
+      throw new DeleteRefusal(
+        400,
+        'unknown-descendant',
+        `${id} 不是这个会话的子会话，已中止，没有删除任何东西。`,
+        { sessionId: id },
+      )
+    }
+    seen.add(id)
+    selected.push(entry)
+  }
+  selected.sort((left, right) => right.depth - left.depth || left.id.localeCompare(right.id))
+  return selected
+}
+
+/**
+ * Ask every Session in a delete set about its own running work.
+ *
+ * The shipped admission answers per Session, so this must be one call per id: a
+ * descendant's running turn or background job is not reported when the target is
+ * asked.
+ * @param {object} ctx - Host Cordis context.
+ * @param {string[]} ids - the Sessions in the delete set.
+ * @returns {Promise<Map<string, object[]>>} only the busy ones, described.
+ */
+async function gatherActivities(ctx, ids) {
+  const busy = new Map()
+  for (const id of ids) {
+    const activity = describeActivity(await sessionActivity(ctx, id))
+    if (activity.length > 0) busy.set(id, activity)
+  }
+  return busy
 }
 
 /**
@@ -339,16 +417,21 @@ async function collectDescendants(ctx, sessionId, removal) {
 async function gatherDescendants(ctx, sessionId, warnings) {
   const collected = new Map()
 
-  /** One discovered child; the closest depth wins and a subagent label outranks a derived one. */
-  const add = (rawId, depth, kind) => {
+  /**
+   * One discovered child. The closest depth wins, a subagent label outranks a
+   * derived one, and the first parent that named it is kept for indentation.
+   */
+  const add = (rawId, depth, kind, parentId) => {
     if (typeof rawId !== 'string' || rawId === sessionId || !SESSION_ID.test(rawId)) return
+    const parent = typeof parentId === 'string' && SESSION_ID.test(parentId) ? parentId : undefined
     const existing = collected.get(rawId)
     if (existing === undefined) {
-      collected.set(rawId, { id: rawId, depth, kind })
+      collected.set(rawId, { id: rawId, depth, kind, ...(parent === undefined ? {} : { parentId: parent }) })
       return
     }
     existing.depth = Math.min(existing.depth, depth)
     if (kind === DESCENDANT_KINDS.subagent) existing.kind = DESCENDANT_KINDS.subagent
+    if (existing.parentId === undefined && parent !== undefined) existing.parentId = parent
   }
 
   // 1. The durable lineage every Session records in its own header.
@@ -372,7 +455,12 @@ async function gatherDescendants(ctx, sessionId, warnings) {
       const entries = await subagents.listDescendants(sessionId)
       if (Array.isArray(entries)) {
         for (const entry of entries) {
-          add(entry?.id, typeof entry?.depth === 'number' ? entry.depth : 1, DESCENDANT_KINDS.subagent)
+          add(
+            entry?.id,
+            typeof entry?.depth === 'number' ? entry.depth : 1,
+            DESCENDANT_KINDS.subagent,
+            entry?.parentId,
+          )
         }
       }
     } catch (error) {
@@ -382,7 +470,40 @@ async function gatherDescendants(ctx, sessionId, warnings) {
 
   const list = [...collected.values()]
   list.sort((left, right) => right.depth - left.depth || left.id.localeCompare(right.id))
-  return list
+  return attachTitles(ctx, list)
+}
+
+/**
+ * Fill in each descendant's title, so the dialog can list names instead of ids.
+ *
+ * Titles are a display nicety: an unavailable query service or a failed read
+ * leaves the entries without one, and the Client falls back to the id.
+ * @param {object} ctx - Host Cordis context.
+ * @param {Array<object>} entries - the gathered descendants.
+ * @returns {Promise<Array<object>>} the same entries, with `title` where known.
+ */
+async function attachTitles(ctx, entries) {
+  if (entries.length === 0) return entries
+  const query = ctx.get('sessionQuery')
+  if (query === undefined || typeof query.readTitleSnapshots !== 'function') return entries
+  try {
+    const results = await query.readTitleSnapshots(entries.map((entry) => entry.id))
+    if (!Array.isArray(results)) return entries
+    const titles = new Map()
+    for (const result of results) {
+      if (result?.status !== 'fulfilled') continue
+      const id = result.value?.session?.id
+      const title = result.value?.title
+      if (typeof id === 'string' && typeof title === 'string' && title.trim() !== '') titles.set(id, title)
+    }
+    for (const entry of entries) {
+      const title = titles.get(entry.id)
+      if (title !== undefined) entry.title = title
+    }
+  } catch {
+    // Titles are optional: the dialog falls back to the id.
+  }
+  return entries
 }
 
 /**
@@ -413,7 +534,12 @@ function walkLineage(records, rootId, add) {
       for (const header of childrenByParent.get(parentId) ?? []) {
         if (seen.has(header.id)) continue
         seen.add(header.id)
-        add(header.id, depth, header.origin === 'subagent' ? DESCENDANT_KINDS.subagent : DESCENDANT_KINDS.derived)
+        add(
+          header.id,
+          depth,
+          header.origin === 'subagent' ? DESCENDANT_KINDS.subagent : DESCENDANT_KINDS.derived,
+          parentId,
+        )
         next.push(header.id)
       }
     }
@@ -434,6 +560,10 @@ async function inspectSession(ctx, sessionId) {
     : await persistence.stat(sessionId)
   const header = snapshot?.header
   const descendants = await gatherDescendants(ctx, sessionId, [])
+  const listed = descendants.slice(0, MAX_LISTED_DESCENDANTS)
+  // Only the Sessions the dialog can show are asked about their work: each answer
+  // costs one admission walk, and beyond the listing nothing can be selected.
+  const busy = await gatherActivities(ctx, [sessionId, ...listed.map((entry) => entry.id)])
   const subagents = descendants.filter((entry) => entry.kind === DESCENDANT_KINDS.subagent).length
   return {
     ok: true,
@@ -441,15 +571,66 @@ async function inspectSession(ctx, sessionId) {
     stored: header !== undefined,
     artifactDirectory: header === undefined ? undefined : locateDirectory(persistence, header),
     ...runtimeOf(ctx, sessionId),
-    activity: describeActivity(await sessionActivity(ctx, sessionId)),
+    activity: busy.get(sessionId) ?? [],
     descendants: {
       count: descendants.length,
       subagents,
       derived: descendants.length - subagents,
-      ids: descendants.slice(0, 20).map((entry) => entry.id),
-      capped: descendants.length > MAX_DESCENDANTS,
+      truncated: descendants.length > listed.length,
+      maxDeletable: MAX_DESCENDANTS,
+      items: listed.map((entry) => ({
+        id: entry.id,
+        kind: entry.kind,
+        depth: entry.depth,
+        ...(entry.parentId === undefined ? {} : { parentId: entry.parentId }),
+        ...(entry.title === undefined ? {} : { title: entry.title }),
+        ...runtimeOf(ctx, entry.id),
+        activity: busy.get(entry.id) ?? [],
+      })),
     },
   }
+}
+
+/**
+ * Close the terminals a Session owns.
+ *
+ * Terminals are part of no shipped admission family, and the service's own owner
+ * cleanup fires when the Agent is released, which can be long after the log is
+ * gone; a shell left running for a deleted conversation helps nobody.
+ * @param {object} ctx - Host Cordis context.
+ * @param {string} sessionId - the Session whose shells close.
+ * @param {object} removal - report being filled in.
+ * @returns {Promise<number>} how many terminals were closed.
+ */
+async function killOwnedTerminals(ctx, sessionId, removal) {
+  const terminals = ctx.get('terminals')
+  if (terminals === undefined || typeof terminals.list !== 'function' || typeof terminals.kill !== 'function') return 0
+
+  let owner
+  try {
+    const agents = ctx.get('agents')
+    owner = typeof agents?.get === 'function' ? agents.get(sessionId) : undefined
+  } catch {
+    owner = undefined
+  }
+  // `list` matches the exact owner object, and a cold Session owns no terminal.
+  if (owner === undefined) return 0
+
+  let killed = 0
+  try {
+    for (const snapshot of terminals.list(owner) ?? []) {
+      const id = typeof snapshot?.sessionId === 'string' ? snapshot.sessionId : ''
+      if (id === '') continue
+      try {
+        if (await terminals.kill(owner, id, 'session deleted')) killed += 1
+      } catch (error) {
+        removal.warnings.push(`关闭终端 ${id} 失败：${messageOf(error)}`)
+      }
+    }
+  } catch (error) {
+    removal.warnings.push(`读取终端列表失败：${messageOf(error)}`)
+  }
+  return killed
 }
 
 /**

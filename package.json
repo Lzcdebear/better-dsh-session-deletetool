@@ -1,14 +1,14 @@
 {
   "name": "dsh-session-delete",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
-  "description": "Delete a conversation from the DSH sidebar instead of only archiving it. / 在会话菜单里真正删除会话，而不只是归档。",
+  "description": "Delete a conversation from the DSH sidebar instead of only archiving it, choosing which of its subagent and forked conversations go with it. / 在会话菜单里真正删除对话，并可勾选连带删除哪些子智能体会话与派生对话。",
   "license": "MIT",
   "author": "Lzcdebear",
   "icon": "./icon.svg",
   "meta": {
     "title": "会话删除 / Session Delete",
-    "description": "会话「⋯」菜单里多一项「删除会话」：删掉该会话的日志文件、子会话日志、工程记录与投影缓存，不只是把它归档隐藏。"
+    "description": "会话「⋯」菜单里多一项「删除会话」：先列出它的子智能体会话与派生对话，可折叠、可逐项勾选，确认后删掉日志、工程记录与投影缓存，不只是归档隐藏。"
   },
   "keywords": [
     "deepseek-harness",

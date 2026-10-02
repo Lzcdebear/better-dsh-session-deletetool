@@ -38,8 +38,6 @@ window.__ModuleLoader__.load({
         'dialog.desc': '将永久删除“{title}”：会话日志、工程记录与投影缓存都会被移除，无法撤销。',
         'dialog.untitled': '未命名会话',
         'dialog.cancel': '取消',
-        'dialog.confirm': '删除',
-        'dialog.confirmStop': '停止并删除',
         'dialog.checking': '检查中…',
         'dialog.deleting': '正在删除…',
         'dialog.failed': '删除失败',
@@ -51,6 +49,19 @@ window.__ModuleLoader__.load({
         'dialog.descendants.subagents': '{n} 个子智能体会话',
         'dialog.descendants.derived': '{n} 个由它派生（fork）出来的对话',
         'dialog.listSeparator': '、',
+        'dialog.group.subagents': '子智能体会话',
+        'dialog.group.derived': '派生对话（fork）',
+        'dialog.selectAll': '删除全部（共 {n} 个）',
+        'dialog.selectPartial': '已选 {m} / {n} 个',
+        'dialog.expandHint': '点分组标题可折叠',
+        'dialog.truncated': '共 {n} 个，下面只列出前 {shown} 个。',
+        'dialog.maxDeletable': '一次最多删除 {max} 个，请分批选择。',
+        'dialog.itemRunning': '运行中',
+        'dialog.itemActive': '有未结束的工作',
+        'dialog.itemOpen': '已打开',
+        'dialog.untitledItem': '未命名',
+        'dialog.confirmCount': '删除 {n} 个会话',
+        'dialog.confirmStopCount': '停止并删除 {n} 个会话',
       },
       en: {
         'menu.delete': 'Delete conversation',
@@ -58,8 +69,6 @@ window.__ModuleLoader__.load({
         'dialog.desc': '“{title}” will be deleted permanently: its session log, workspace account and projection cache are removed. This cannot be undone.',
         'dialog.untitled': 'Untitled conversation',
         'dialog.cancel': 'Cancel',
-        'dialog.confirm': 'Delete',
-        'dialog.confirmStop': 'Stop and delete',
         'dialog.checking': 'Checking…',
         'dialog.deleting': 'Deleting…',
         'dialog.failed': 'Delete failed',
@@ -71,6 +80,19 @@ window.__ModuleLoader__.load({
         'dialog.descendants.subagents': '{n} subagent conversation(s)',
         'dialog.descendants.derived': '{n} conversation(s) forked off it',
         'dialog.listSeparator': ', ',
+        'dialog.group.subagents': 'Subagent conversations',
+        'dialog.group.derived': 'Forked conversations',
+        'dialog.selectAll': 'Delete all ({n})',
+        'dialog.selectPartial': '{m} of {n} selected',
+        'dialog.expandHint': 'Click a group title to collapse it',
+        'dialog.truncated': 'There are {n}; only the first {shown} are listed.',
+        'dialog.maxDeletable': 'At most {max} can be deleted at once — select in batches.',
+        'dialog.itemRunning': 'running',
+        'dialog.itemActive': 'has unfinished work',
+        'dialog.itemOpen': 'open',
+        'dialog.untitledItem': 'Untitled',
+        'dialog.confirmCount': 'Delete {n} conversations',
+        'dialog.confirmStopCount': 'Stop and delete {n} conversations',
       },
     }
 
@@ -130,12 +152,18 @@ window.__ModuleLoader__.load({
       return payload
     }
 
-    /** Ask the Host half to delete one Session. */
-    async function deleteSession(sessionId, stop) {
+    /**
+     * Ask the Host half to delete one Session.
+     * @param sessionId - the Session the user acted on.
+     * @param stop - whether running work may be stopped first.
+     * @param descendants - the descendant ids the user ticked; always sent, so
+     *   the Host deletes exactly what the dialog showed.
+     */
+    async function deleteSession(sessionId, stop, descendants) {
       const response = await fetch(DELETE_PATH, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId, stop: stop === true }),
+        body: JSON.stringify({ sessionId, stop: stop === true, descendants }),
       })
       const payload = await response.json().catch(() => null)
       if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
@@ -157,6 +185,42 @@ window.__ModuleLoader__.load({
         parts.push(t('dialog.descendants.derived', { n: counts.derived }))
       }
       return parts.length === 0 ? null : parts.join(t('dialog.listSeparator'))
+    }
+
+    /** The activity families reported for one Session, or an empty list. */
+    function activityOf(entity) {
+      return Array.isArray(entity?.activity) ? entity.activity : []
+    }
+
+    /** The tail of an id, so two same-titled Sessions stay distinguishable. */
+    function shortId(id) {
+      return typeof id === 'string' && id.length > 6 ? `…${id.slice(-6)}` : id
+    }
+
+    /**
+     * Fold the per-Session activity a refusal reported back into the state the
+     * dialog is showing, so the rows that are busy say so on the next render.
+     */
+    function mergeActivity(info, activeSessions) {
+      if (info === null || info === undefined) return info
+      const byId = new Map()
+      for (const entry of activeSessions) {
+        if (typeof entry?.sessionId !== 'string') continue
+        byId.set(entry.sessionId, Array.isArray(entry.activity) ? entry.activity : [])
+      }
+      const descendants = info.descendants === undefined
+        ? undefined
+        : {
+          ...info.descendants,
+          items: Array.isArray(info.descendants.items)
+            ? info.descendants.items.map((item) => (byId.has(item.id) ? { ...item, activity: byId.get(item.id) } : item))
+            : info.descendants.items,
+        }
+      return {
+        ...info,
+        activity: byId.get(info.sessionId) ?? activityOf(info),
+        ...(descendants === undefined ? {} : { descendants }),
+      }
     }
 
     // ---- the menu row -------------------------------------------------------
@@ -203,6 +267,8 @@ window.__ModuleLoader__.load({
     function DeleteSessionDialog() {
       const request = useSyncExternalStore(subscribe, getPending)
       const [state, setState] = useState(IDLE)
+      const [selected, setSelected] = useState(null)
+      const [collapsed, setCollapsed] = useState({})
       const dialog = useRef(null)
 
       const close = useCallback(() => {
@@ -211,25 +277,33 @@ window.__ModuleLoader__.load({
           settle()
           return IDLE
         })
+        setSelected(null)
       }, [])
 
       // Every open re-reads the Host's state: the answer is only true for the
       // moment the dialog opened, and a Session can start working in between.
+      // Nobody is selected until that answer arrives, so a Session whose family
+      // is still being walked can never be deleted by accident.
       useEffect(() => {
         if (request === null) {
           setState(IDLE)
+          setSelected(null)
           return undefined
         }
         let cancelled = false
         setState({ phase: 'checking', info: null, error: null, stop: false, busy: false })
+        setSelected(null)
         inspectSession(request.sessionId).then(
           (info) => {
             if (cancelled) return
+            const items = Array.isArray(info?.descendants?.items) ? info.descendants.items : []
+            setSelected(new Set(items.map((item) => item.id)))
             setState({
               phase: 'ready',
               info,
               error: null,
-              stop: Array.isArray(info.activity) && info.activity.length > 0,
+              // Default to stopping work, but only when something is running.
+              stop: activityOf(info).length > 0 || items.some((item) => activityOf(item).length > 0),
               busy: false,
             })
           },
@@ -257,39 +331,180 @@ window.__ModuleLoader__.load({
 
       if (request === null) return null
 
+      const info = state.info
+      const items = Array.isArray(info?.descendants?.items) ? info.descendants.items : []
+      const picked = selected ?? new Set(items.map((item) => item.id))
+      const selectedCount = items.filter((item) => picked.has(item.id)).length
+
+      const toggleItem = (id) => {
+        setSelected(() => {
+          const next = new Set(picked)
+          if (next.has(id)) next.delete(id)
+          else next.add(id)
+          return next
+        })
+      }
+      const toggleMany = (ids, on) => {
+        setSelected(() => {
+          const next = new Set(picked)
+          for (const id of ids) {
+            if (on) next.add(id)
+            else next.delete(id)
+          }
+          return next
+        })
+      }
+
       const confirm = () => {
         if (state.busy || state.phase !== 'ready') return
+        const chosen = items.filter((item) => picked.has(item.id)).map((item) => item.id)
         setState((previous) => ({ ...previous, busy: true, error: null }))
-        deleteSession(request.sessionId, state.stop).then(
+        deleteSession(request.sessionId, state.stop, chosen).then(
           () => {
             settle()
+            setSelected(null)
             setState(IDLE)
           },
           (reason) => {
             // A Session that started working between the check and the write
-            // answers with its activity, so the next press stops it.
-            const activity = Array.isArray(reason?.activity) ? reason.activity : null
+            // answers with its activity, so the next press stops it and the rows
+            // that are busy say so.
+            const active = Array.isArray(reason?.activeSessions) ? reason.activeSessions : null
             setState((previous) => ({
               ...previous,
               busy: false,
               error: reason instanceof Error ? reason.message : String(reason),
-              stop: previous.stop || reason?.code === 'session-active' || activity !== null,
-              info: activity === null || previous.info === null
-                ? previous.info
-                : { ...previous.info, activity },
+              stop: previous.stop || reason?.code === 'session-active' || active !== null,
+              info: active === null ? previous.info : mergeActivity(previous.info, active),
             }))
           },
         )
       }
 
       const title = request.title === undefined || request.title === '' ? t('dialog.untitled') : request.title
-      const info = state.info
-      const activity = info === null || !Array.isArray(info.activity) ? [] : info.activity
+      const activity = activityOf(info)
       const descendants = descendantsText(info)
       const checking = state.phase === 'checking'
+      const deletedCount = selectedCount + 1
       const confirmLabel = state.busy || checking
         ? (checking ? t('dialog.checking') : t('dialog.deleting'))
-        : (state.stop ? t('dialog.confirmStop') : t('dialog.confirm'))
+        : state.stop
+          ? t('dialog.confirmStopCount', { n: deletedCount })
+          : t('dialog.confirmCount', { n: deletedCount })
+
+      /**
+       * One descendant row: a checkbox, its title, and the states that matter
+       * before deleting it. Indented by lineage depth so a family reads as one.
+       */
+      const row = (entry) => {
+        const busy = activityOf(entry)
+        const hints = []
+        if (busy.length > 0) hints.push(busy.map((item) => item.label).join('、'))
+        else if (entry.running === true) hints.push(t('dialog.itemRunning'))
+        if (entry.open === true) hints.push(t('dialog.itemOpen'))
+        const name = entry.title === undefined || entry.title === '' ? t('dialog.untitledItem') : entry.title
+        return h('label', {
+          className: 'dsd-row',
+          key: entry.id,
+          style: { paddingInlineStart: `${10 + Math.min(entry.depth ?? 1, 6) * 14}px` },
+        }, [
+          h('input', {
+            type: 'checkbox',
+            key: 'box',
+            className: 'dsd-check',
+            checked: picked.has(entry.id),
+            onChange: () => toggleItem(entry.id),
+          }),
+          h('span', { className: 'dsd-rowText', key: 'text' }, [
+            h('span', { className: 'dsd-rowTitle', key: 'name', children: name }),
+            h('span', { className: 'dsd-rowId', key: 'id', children: shortId(entry.id) }),
+          ]),
+          hints.length === 0
+            ? null
+            : h('span', { className: 'dsd-badge', key: 'badge', children: hints.join(' · ') }),
+        ])
+      }
+
+      /** The whole selectable family: one master row, then one collapsible group per kind. */
+      const tree = () => {
+        const allIds = items.map((entry) => entry.id)
+        const everything = selectedCount === items.length && items.length > 0
+        const groups = [
+          { key: 'subagent', label: t('dialog.group.subagents'), members: items.filter((entry) => entry.kind === 'subagent') },
+          { key: 'derived', label: t('dialog.group.derived'), members: items.filter((entry) => entry.kind !== 'subagent') },
+        ].filter((group) => group.members.length > 0)
+
+        return h('div', { className: 'dsd-tree', key: 'tree' }, [
+          h('label', { className: 'dsd-row dsd-master', key: 'master' }, [
+            h('input', {
+              type: 'checkbox',
+              key: 'box',
+              className: 'dsd-check',
+              checked: everything,
+              ref: (node) => {
+                if (node !== null) node.indeterminate = selectedCount > 0 && !everything
+              },
+              onChange: () => toggleMany(allIds, !everything),
+            }),
+            h('span', { className: 'dsd-rowText', key: 'text' }, [
+              h('span', {
+                className: 'dsd-rowTitle',
+                key: 'name',
+                children: everything
+                  ? t('dialog.selectAll', { n: items.length })
+                  : t('dialog.selectPartial', { m: selectedCount, n: items.length }),
+              }),
+              h('span', { className: 'dsd-rowId', key: 'hint', children: t('dialog.expandHint') }),
+            ]),
+          ]),
+          ...groups.map((group) => {
+            const memberIds = group.members.map((entry) => entry.id)
+            const on = memberIds.every((id) => picked.has(id))
+            const isCollapsed = collapsed[group.key] === true
+            return h('div', { className: 'dsd-group', key: group.key }, [
+              h('div', { className: 'dsd-groupHead', key: 'head' }, [
+                h('button', {
+                  type: 'button',
+                  key: 'caret',
+                  className: 'dsd-caret',
+                  'aria-expanded': !isCollapsed,
+                  onClick: () => setCollapsed((previous) => ({ ...previous, [group.key]: !isCollapsed })),
+                  children: isCollapsed ? '▸' : '▾',
+                }),
+                h('label', { className: 'dsd-row dsd-groupRow', key: 'label' }, [
+                  h('input', {
+                    type: 'checkbox',
+                    key: 'box',
+                    className: 'dsd-check',
+                    checked: on,
+                    onChange: () => toggleMany(memberIds, !on),
+                  }),
+                  h('span', {
+                    className: 'dsd-rowText',
+                    key: 'text',
+                    children: `${group.label} (${group.members.length})`,
+                  }),
+                ]),
+              ]),
+              isCollapsed ? null : h('div', { className: 'dsd-rows', key: 'rows' }, group.members.map(row)),
+            ])
+          }),
+          info?.descendants?.truncated === true
+            ? h('p', {
+              className: 'dsd-note dsd-hint',
+              key: 'truncated',
+              children: t('dialog.truncated', { n: info.descendants.count, shown: items.length }),
+            })
+            : null,
+          typeof info?.descendants?.maxDeletable === 'number' && info.descendants.count > info.descendants.maxDeletable
+            ? h('p', {
+              className: 'dsd-note dsd-hint',
+              key: 'cap',
+              children: t('dialog.maxDeletable', { max: info.descendants.maxDeletable }),
+            })
+            : null,
+        ])
+      }
 
       return h('div', {
         className: 'dsd-overlay',
@@ -318,8 +533,9 @@ window.__ModuleLoader__.load({
             : h('div', { className: 'dsd-note dsd-warn', key: 'running' }, [
               h('p', { className: 'dsd-noteTitle', key: 'head', children: t('dialog.running') }),
               h('ul', { className: 'dsd-list', key: 'list' }, activity.map((entry, index) => {
-                const items = Array.isArray(entry.items) ? entry.items : []
-                const names = items.map((item) => (item.label === '' ? item.id : item.label)).filter((name) => name !== '')
+                const names = Array.isArray(entry.items)
+                  ? entry.items.map((item) => (item.label === '' ? item.id : item.label)).filter((name) => name !== '')
+                  : []
                 return h('li', { key: `${entry.kind}-${index}` }, names.length === 0 ? entry.label : `${entry.label}：${names.join('、')}`)
               })),
               h('p', { className: 'dsd-noteHint', key: 'hint', children: t('dialog.runningHint') }),
@@ -330,9 +546,11 @@ window.__ModuleLoader__.load({
           state.phase === 'ready' && info === null
             ? h('p', { className: 'dsd-note', key: 'unknown', children: t('dialog.unknown') })
             : null,
-          descendants === null
-            ? null
-            : h('p', { className: 'dsd-note dsd-descendants', key: 'descendants', children: t('dialog.descendants', { list: descendants }) }),
+          items.length === 0
+            ? (descendants === null
+              ? null
+              : h('p', { className: 'dsd-note dsd-descendants', key: 'descendants', children: t('dialog.descendants', { list: descendants }) }))
+            : tree(),
           state.error === null
             ? null
             : h('p', { className: 'dsd-error', key: 'error', children: `${t('dialog.failed')}：${state.error}` }),
@@ -376,6 +594,22 @@ window.__ModuleLoader__.load({
 .dsd-noteTitle{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-state-warn-primary,#d9a03a)}
 .dsd-noteHint{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#a8adb7)}
 .dsd-list{margin:0;padding-inline-start:18px;font-size:13px;line-height:20px}
+.dsd-tree{display:flex;flex-direction:column;gap:2px;padding:6px 0;border-block:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.2))}
+.dsd-row{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:var(--dsw-radius-sm,6px);cursor:pointer}
+.dsd-row:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dsd-check{flex:none;width:14px;height:14px;margin:0;accent-color:var(--dsw-alias-state-error-primary,#e5484d);cursor:pointer}
+.dsd-rowText{flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsd-rowTitle{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsd-rowId{flex:none;font-size:11px;color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-badge{flex:none;font-size:11px;line-height:16px;padding:1px 6px;border-radius:999px;border:.5px solid var(--dsw-alias-state-warn-primary,#d9a03a);color:var(--dsw-alias-state-warn-primary,#d9a03a)}
+.dsd-master{font-weight:500}
+.dsd-group{display:flex;flex-direction:column}
+.dsd-groupHead{display:flex;align-items:center;gap:2px}
+.dsd-groupRow{flex:1;min-width:0;font-weight:500}
+.dsd-caret{flex:none;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;border:none;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-secondary,#a8adb7);cursor:pointer;font:inherit;font-size:11px;line-height:1}
+.dsd-caret:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dsd-rows{display:flex;flex-direction:column}
+.dsd-hint{margin:4px 0 0;font-size:12px;line-height:18px}
 .dsd-descendants{padding:8px 12px;border-radius:var(--dsw-radius-md,8px);border:.5px solid var(--dsw-alias-state-warn-primary,#d9a03a);color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsd-error{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-state-error-primary,#e5484d);word-break:break-word}
 .dsd-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px}
