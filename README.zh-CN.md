@@ -165,3 +165,7 @@ node --test test/host.test.mjs
 ## 许可
 
 [MIT](LICENSE)
+
+## 作者
+
+- Bilibili：<https://space.bilibili.com/220996778>
