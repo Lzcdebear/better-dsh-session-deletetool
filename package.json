@@ -1,6 +1,6 @@
 {
   "name": "better-dsh-session-deletetool",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "description": "Delete a conversation from the DSH sidebar instead of only archiving it, and see the whole family it spawned — every subagent session and derived conversation, nested — before choosing which of them go with it; delete many at once from the trash icon beside the workspace search. / 在会话菜单里真正删除对话；确认框会把整个家族（子智能体、派生对话及其下一层）按层级画出来，删之前先看得见，并可勾选连带删除哪些；工作区搜索图标左侧另有批量删除入口。",
   "license": "MIT",

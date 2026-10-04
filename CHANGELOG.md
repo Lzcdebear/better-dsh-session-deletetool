@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+**The package is on npm, and the READMEs say how to install it.** `better-dsh-session-deletetool@0.4.0`
+is published, so the npm route is now the first install section: `npm install
+better-dsh-session-deletetool`, or the plugin manager's install entry with the same registry name. The
+GitHub, local-copy and tarball routes moved down one number each. Nothing about the plugin changed.
+
 ## 0.4.0
 
 **The package is `better-dsh-session-deletetool` now.** Every name that pointed at the old identity was

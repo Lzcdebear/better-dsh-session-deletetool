@@ -135,9 +135,26 @@ sessions with "switch away first", which wrongly blocked conversations that were
 
 Everything below goes through DSH's own plugin manager, which accepts an install spec
 (`@deepseek-ai/dsh-plugin-manager`): a registry name, a git host shorthand, a repository URL, a
-tarball, or an absolute local path. Pick whichever route your network allows.
+tarball, or an absolute local path. The npm route also works with a plain `npm install`, into the
+profile directory. Pick whichever route your network allows.
 
-### 1. Straight from GitHub (needs github.com reachable)
+### 1. From npm (published as `better-dsh-session-deletetool`)
+
+The registry route, and the only one that does not need github.com:
+
+```
+npm install better-dsh-session-deletetool
+```
+
+DSH's own plugin manager takes the registry name directly, which is the better route inside the app:
+it records the dependency in the profile and reloads it.
+
+- **In the app:** Settings → Plugins → the install entry, paste `better-dsh-session-deletetool`.
+- **Through an agent session:** `plugin_manager { action: "install_bundle", target: "better-dsh-session-deletetool" }`.
+
+Pin a version the way npm writes it: `better-dsh-session-deletetool@0.4.0`.
+
+### 2. Straight from GitHub (needs github.com reachable)
 
 Spec:
 
@@ -161,10 +178,10 @@ Give it to DSH:
 Pin a ref with `#`: `github:Lzcdebear/better-dsh-session-deletetool#v0.1.0`.
 
 If the connection check fails, DSH reports a bounded log path. On a network where github.com is not
-reachable, use route 2 or 3 — or point git at your proxy first
+reachable, use route 1, 3 or 4 — or point git at your proxy first
 (`git config --global http.proxy http://127.0.0.1:7890`).
 
-### 2. From a local copy (works offline)
+### 3. From a local copy (works offline)
 
 Download the repository (ZIP or `git clone`), unpack it anywhere, then install the **absolute
 directory**:
@@ -176,13 +193,13 @@ plugin_manager { action: "install_bundle", target: "D:\\plugins\\better-dsh-sess
 DSH records a `link:` dependency and reloads the profile. This is the route used to develop the
 plugin, and the one to use behind a restrictive network.
 
-### 3. From the release tarball
+### 4. From the release tarball
 
 ```
 https://github.com/Lzcdebear/better-dsh-session-deletetool/archive/refs/heads/main.tar.gz
 ```
 
-Same install entry as route 1; useful when git is unavailable but HTTPS is not.
+Same install entry as route 2; useful when git is unavailable but HTTPS is not.
 
 ### After installing
 
