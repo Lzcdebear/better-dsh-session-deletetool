@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0
+
+**The package is `better-dsh-session-deletetool` now.** Every name that pointed at the old identity was
+renamed in one pass, so nothing resolves the old spelling any more:
+
+- the npm package name, the GitHub repository (`Lzcdebear/better-dsh-session-deletetool`), and the
+  `repository` / `homepage` / `bugs` URLs plus every install target in the READMEs;
+- the four Host routes: `/better-dsh-session-deletetool/inspect`, `/delete`, `/catalog` and
+  `/delete-batch`;
+- the client module id, the locale namespace, the sidebar menu row, both `shell.overlay` seats and the
+  bulk anchor's registration ids, the `data-dsh-plugin` marker, and the React display name;
+- the Host loader row in `cordis.patch.yml` — both the row `id` and the module `name` the profile
+  imports;
+- the Host's `[better-dsh-session-deletetool]` log prefix and its effect labels.
+
+**The family view is written down now.** The dialogs have drawn a conversation's subagents and derived
+conversations as one tree for several releases, but neither README said so out loud. Both now open that
+section by saying that the sidebar cannot show the relation and the dialog is the one place it is
+drawn, and the npm description says it too.
+
+A profile that had the old name linked has to link the new one: the bundle key in
+`dsh.profile.bundles` and the dependency key in the profile's own `package.json` both change.
+
 ## 0.3.9
 
 **Both dialogs now draw the same family tree.** The single conversation's dialog and the bulk one share

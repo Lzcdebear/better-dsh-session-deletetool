@@ -1,4 +1,4 @@
-# dsh-session-delete
+# better-dsh-session-deletetool
 
 **真正删除 DeepSeek Harness 里的会话 —— DSH 自带的能力只有归档。**
 
@@ -12,7 +12,7 @@ DSH 只能**归档**会话：归档把那一行从侧边栏隐藏，工件一样
 
 > **Nothing deletes session files** —— 日志在 `root` 下不断堆积，直到被外部删除；这一层没有删除接口。
 
-于是用得越久，会话只增不减。这个插件补上缺失的那一步：在会话的 `⋯` 菜单里加一项**删除会话**，真的把数据抹掉。
+于是用得越久，会话只增不减。这个插件补上缺失的那一步：在会话的 `⋯` 菜单里加一项**删除会话**，真的把数据抹掉；它弹出的确认框也是唯一能看清一个会话全家结构的地方。
 
 ## 删了什么
 
@@ -25,9 +25,9 @@ DSH 只能**归档**会话：归档把那一行从侧边栏隐藏，工件一样
 5. **关掉它拥有的终端** —— `ctx.terminals` 不属于任何一条准入族，服务要等 Agent 被释放才回收，而那时日志早就没了；
 6. **通知页面** —— 每个被删的 id 各发一次 `api-session/removed`，这是官方会话控制器销毁会话时发的同一个事件，侧边栏的行会立刻消失。
 
-### 选择删什么
+### 看清家族，再选择删什么
 
-确认框会把整个家族画成**一棵树**让你挑，而不是默认全带走：
+侧边栏里，子智能体和派生对话都是各自独立的一行，看不出是谁生的，DSH 本身也没有任何地方画这条关系。这个确认框是唯一画出来的地方：整个家族画成**一棵树**，包括派生对话自己带出来的下一层。
 
 - 第 1 行是**本对话**，它的勾选框管整个家族，名字跟侧边栏显示的一致；
 - 第 2 行是一个**可折叠的「子智能体（n）」分支**，装本对话自己生的子智能体；
@@ -75,21 +75,21 @@ DSH 只能**归档**会话：归档把那一行从侧边栏隐藏，工件一样
 spec：
 
 ```
-github:Lzcdebear/dsh-delete-session
+github:Lzcdebear/better-dsh-session-deletetool
 ```
 
 等价写法：
 
 ```
-https://github.com/Lzcdebear/dsh-delete-session
+https://github.com/Lzcdebear/better-dsh-session-deletetool
 ```
 
 把 spec 交给 DSH：
 
 - **在应用里**：设置 → 插件 → 安装入口，粘贴 spec。（插件管理界面和 `plugin_manager` 工具接受的是同一个字符串。）
-- **在会话里**：让 Agent 装 —— 工具调用是 `plugin_manager`，`action: "install_bundle"`，`target: "github:Lzcdebear/dsh-delete-session"`。
+- **在会话里**：让 Agent 装 —— 工具调用是 `plugin_manager`，`action: "install_bundle"`，`target: "github:Lzcdebear/better-dsh-session-deletetool"`。
 
-可以用 `#` 钉住某个 ref：`github:Lzcdebear/dsh-delete-session#v0.1.0`。
+可以用 `#` 钉住某个 ref：`github:Lzcdebear/better-dsh-session-deletetool#v0.1.0`。
 
 连接检查失败时 DSH 会给出一个有界的日志路径。如果这台机器根本连不上 github.com，走第 2 或第 3 条，或者先给 git 配上代理（`git config --global http.proxy http://127.0.0.1:7890`）。
 
@@ -98,7 +98,7 @@ https://github.com/Lzcdebear/dsh-delete-session
 把仓库下载下来（ZIP 或 `git clone`），解压到任意位置，然后把**绝对目录**交给插件管理：
 
 ```
-plugin_manager { action: "install_bundle", target: "D:\\plugins\\dsh-delete-session" }
+plugin_manager { action: "install_bundle", target: "D:\\plugins\\better-dsh-session-deletetool" }
 ```
 
 DSH 会记一条 `link:` 依赖并重载 profile。开发这个插件用的就是这条路，网络受限时也走它。
@@ -106,7 +106,7 @@ DSH 会记一条 `link:` 依赖并重载 profile。开发这个插件用的就�
 ### 3. 从发布 tarball 装
 
 ```
-https://github.com/Lzcdebear/dsh-delete-session/archive/refs/heads/main.tar.gz
+https://github.com/Lzcdebear/better-dsh-session-deletetool/archive/refs/heads/main.tar.gz
 ```
 
 安装入口同第 1 条；git 不可用但 HTTPS 通的时候好用。
@@ -115,7 +115,7 @@ https://github.com/Lzcdebear/dsh-delete-session/archive/refs/heads/main.tar.gz
 
 宿主半随 profile 一起加载；客户端半刷新页面后出现。会话的 `⋯` 菜单里会多一项**删除会话 / Delete conversation**。
 
-想卸载就用同一个管理入口：`plugin_manager { action: "remove_bundle", target: "dsh-session-delete" }`（bundle 键就是包名）。
+想卸载就用同一个管理入口：`plugin_manager { action: "remove_bundle", target: "better-dsh-session-deletetool" }`（bundle 键就是包名）。
 
 ## 用法
 
@@ -133,10 +133,10 @@ https://github.com/Lzcdebear/dsh-delete-session/archive/refs/heads/main.tar.gz
 
 | 路由 | 方法 | 作用 |
 |---|---|---|
-| `/dsh-session-delete/inspect?sessionId=…` | GET | 返回 `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `warnings`（没读到的血缘线索，避免"少几行"被当成"这个会话没有子会话"），以及 `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }`，其中每项带 `id`、`kind`、`depth`、`parentId`、`title`、`open`、`agent`、`running` 和它自己的 `activity` |
-| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop?, descendants? }`——`descendants` 不传表示整个家族，传空数组表示只删它自己；返回 `removed`、`descendants`（每条带 `kind`）、`kept`、`stoppedActivity`、`terminalsKilled`、`warnings`、`runtime`、`activity`。点到的名字不在家族里会在动手之前就以 `400 unknown-descendant` 拒绝 |
-| `/dsh-session-delete/catalog` | GET | 返回 `{ ok, workspaces: [{ key, workspaceId, title, path, sessions[] }], totals }`；每个会话行带 `id`、`kind`（`root` / `subagent` / `derived`）、`depth`、`parentId`、`hasChildren`、`family`、`subagents`、`derived`、`title`、`cwd`、`open`、`agent`、`running`、`activity`。分区顺序就是注册表里工作区的顺序，`workspaceId` 为 `null` 的那个分区是"未归类" |
-| `/dsh-session-delete/delete-batch` | POST | body `{ roots: [{ sessionId, descendants? }], stop? }`，每个根各自照单会话那条规则走一遍；返回 `{ ok, roots, removed[], failed[] }`。某个根失败只记一条 `failed`，不会中止其余。一次最多 200 个根 |
+| `/better-dsh-session-deletetool/inspect?sessionId=…` | GET | 返回 `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `warnings`（没读到的血缘线索，避免"少几行"被当成"这个会话没有子会话"），以及 `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }`，其中每项带 `id`、`kind`、`depth`、`parentId`、`title`、`open`、`agent`、`running` 和它自己的 `activity` |
+| `/better-dsh-session-deletetool/delete` | POST | body `{ sessionId, stop?, descendants? }`——`descendants` 不传表示整个家族，传空数组表示只删它自己；返回 `removed`、`descendants`（每条带 `kind`）、`kept`、`stoppedActivity`、`terminalsKilled`、`warnings`、`runtime`、`activity`。点到的名字不在家族里会在动手之前就以 `400 unknown-descendant` 拒绝 |
+| `/better-dsh-session-deletetool/catalog` | GET | 返回 `{ ok, workspaces: [{ key, workspaceId, title, path, sessions[] }], totals }`；每个会话行带 `id`、`kind`（`root` / `subagent` / `derived`）、`depth`、`parentId`、`hasChildren`、`family`、`subagents`、`derived`、`title`、`cwd`、`open`、`agent`、`running`、`activity`。分区顺序就是注册表里工作区的顺序，`workspaceId` 为 `null` 的那个分区是"未归类" |
+| `/better-dsh-session-deletetool/delete-batch` | POST | body `{ roots: [{ sessionId, descendants? }], stop? }`，每个根各自照单会话那条规则走一遍；返回 `{ ok, roots, removed[], failed[] }`。某个根失败只记一条 `failed`，不会中止其余。一次最多 200 个根 |
 
 四条路由各自带同源校验：`Host` 必须是环回、`sec-fetch-site` 不能是 `cross-site`、`Origin` 存在时必须与 `Host` 同源。别的网站页面打不进来。
 

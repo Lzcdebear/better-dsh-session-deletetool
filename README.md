@@ -1,4 +1,4 @@
-# dsh-session-delete
+# better-dsh-session-deletetool
 
 **Delete a conversation from DeepSeek Harness — DSH ships archive only.**
 
@@ -17,7 +17,8 @@ conversation can be restored at any time. The persistence seam has no deletion A
 > seam has no deletion API.
 
 So a long-lived profile accumulates conversations forever. This plugin adds the missing step: a
-**Delete conversation** row in each session's `⋯` menu that really removes the data.
+**Delete conversation** row in each session's `⋯` menu that really removes the data — and the dialog
+it opens is also the one place that shows a conversation's whole family before you touch it.
 
 ## What it deletes
 
@@ -43,9 +44,12 @@ For the chosen session, the Host half:
 6. **tells connected pages** — one `api-session/removed` per removed id, the same event the shipped
    Session controller emits when a Session is disposed, so the rows leave the sidebar immediately.
 
-### Choosing what goes with it
+### Seeing the family, and choosing what goes with it
 
-The dialog draws the session's whole family as **one tree**:
+The sidebar lists a subagent session and a derived conversation as rows of their own, and nothing there
+says which conversation spawned them; DSH itself never draws that relation. This dialog is the one
+place it is drawn: the session's whole family as **one tree**, the branches below the branches
+included.
 
 - row 1 is this conversation, carrying the whole family's checkbox and named as the sidebar names it;
 - row 2 is one collapsible **Subagents (n)** branch holding the subagents this conversation spawned;
@@ -138,13 +142,13 @@ tarball, or an absolute local path. Pick whichever route your network allows.
 Spec:
 
 ```
-github:Lzcdebear/dsh-delete-session
+github:Lzcdebear/better-dsh-session-deletetool
 ```
 
 or, equivalently:
 
 ```
-https://github.com/Lzcdebear/dsh-delete-session
+https://github.com/Lzcdebear/better-dsh-session-deletetool
 ```
 
 Give it to DSH:
@@ -152,9 +156,9 @@ Give it to DSH:
 - **In the app:** Settings → Plugins → the install entry, paste the spec. (The Plugin Manager UI and
   the `plugin_manager` tool take exactly the same spec string.)
 - **Through an agent session:** ask the agent to install it — the tool call is `plugin_manager` with
-  `action: "install_bundle"` and `target: "github:Lzcdebear/dsh-delete-session"`.
+  `action: "install_bundle"` and `target: "github:Lzcdebear/better-dsh-session-deletetool"`.
 
-Pin a ref with `#`: `github:Lzcdebear/dsh-delete-session#v0.1.0`.
+Pin a ref with `#`: `github:Lzcdebear/better-dsh-session-deletetool#v0.1.0`.
 
 If the connection check fails, DSH reports a bounded log path. On a network where github.com is not
 reachable, use route 2 or 3 — or point git at your proxy first
@@ -166,7 +170,7 @@ Download the repository (ZIP or `git clone`), unpack it anywhere, then install t
 directory**:
 
 ```
-plugin_manager { action: "install_bundle", target: "D:\\plugins\\dsh-delete-session" }
+plugin_manager { action: "install_bundle", target: "D:\\plugins\\better-dsh-session-deletetool" }
 ```
 
 DSH records a `link:` dependency and reloads the profile. This is the route used to develop the
@@ -175,7 +179,7 @@ plugin, and the one to use behind a restrictive network.
 ### 3. From the release tarball
 
 ```
-https://github.com/Lzcdebear/dsh-delete-session/archive/refs/heads/main.tar.gz
+https://github.com/Lzcdebear/better-dsh-session-deletetool/archive/refs/heads/main.tar.gz
 ```
 
 Same install entry as route 1; useful when git is unavailable but HTTPS is not.
@@ -186,7 +190,7 @@ The Host half loads with the profile. The Client half appears after the page is 
 shows up in the session `⋯` menu as **删除会话 / Delete conversation**.
 
 To remove the plugin again, use the same manager:
-`plugin_manager { action: "remove_bundle", target: "dsh-session-delete" }` (the bundle key is the
+`plugin_manager { action: "remove_bundle", target: "better-dsh-session-deletetool" }` (the bundle key is the
 package name).
 
 ## Usage
@@ -215,10 +219,10 @@ uses.
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/dsh-session-delete/inspect?sessionId=…` | GET | `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `warnings` (the leads that could not be read, so a missing branch is never mistaken for a childless one), and `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }` where each item carries `id`, `kind`, `depth`, `parentId`, `title`, `open`, `agent`, `running` and its own `activity` |
-| `/dsh-session-delete/delete` | POST | body `{ sessionId, stop?, descendants? }` — `descendants` omitted means the whole family, an empty array means the session alone; returns `removed`, `descendants` (each with its `kind`), `kept`, `stoppedActivity`, `terminalsKilled`, `warnings`, `runtime`, `activity`. A name outside the family is refused with `400 unknown-descendant` before anything is removed |
-| `/dsh-session-delete/catalog` | GET | `{ ok, workspaces: [{ key, workspaceId, title, path, sessions[] }], totals }`; each session row carries `id`, `kind` (`root` / `subagent` / `derived`), `depth`, `parentId`, `hasChildren`, `family`, `subagents`, `derived`, `title`, `cwd`, `open`, `agent`, `running`, `activity`. Section order is the registry's own Workspace order, and the section whose `workspaceId` is `null` is Ungrouped |
-| `/dsh-session-delete/delete-batch` | POST | body `{ roots: [{ sessionId, descendants? }], stop? }`, each root running the single-session delete once; returns `{ ok, roots, removed[], failed[] }`. A failing root is reported as one `failed` entry and the rest are still attempted. At most 200 roots per request |
+| `/better-dsh-session-deletetool/inspect?sessionId=…` | GET | `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `warnings` (the leads that could not be read, so a missing branch is never mistaken for a childless one), and `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }` where each item carries `id`, `kind`, `depth`, `parentId`, `title`, `open`, `agent`, `running` and its own `activity` |
+| `/better-dsh-session-deletetool/delete` | POST | body `{ sessionId, stop?, descendants? }` — `descendants` omitted means the whole family, an empty array means the session alone; returns `removed`, `descendants` (each with its `kind`), `kept`, `stoppedActivity`, `terminalsKilled`, `warnings`, `runtime`, `activity`. A name outside the family is refused with `400 unknown-descendant` before anything is removed |
+| `/better-dsh-session-deletetool/catalog` | GET | `{ ok, workspaces: [{ key, workspaceId, title, path, sessions[] }], totals }`; each session row carries `id`, `kind` (`root` / `subagent` / `derived`), `depth`, `parentId`, `hasChildren`, `family`, `subagents`, `derived`, `title`, `cwd`, `open`, `agent`, `running`, `activity`. Section order is the registry's own Workspace order, and the section whose `workspaceId` is `null` is Ungrouped |
+| `/better-dsh-session-deletetool/delete-batch` | POST | body `{ roots: [{ sessionId, descendants? }], stop? }`, each root running the single-session delete once; returns `{ ok, roots, removed[], failed[] }`. A failing root is reported as one `failed` entry and the rest are still attempted. At most 200 roots per request |
 
 All four routes carry their own same-origin gate: `Host` must be loopback, `sec-fetch-site` must not
 be `cross-site`, and a present `Origin` must match `Host`. Another site's page cannot reach them.

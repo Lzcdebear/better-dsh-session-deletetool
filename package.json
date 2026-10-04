@@ -1,14 +1,14 @@
 {
-  "name": "dsh-session-delete",
-  "version": "0.3.9",
+  "name": "better-dsh-session-deletetool",
+  "version": "0.4.0",
   "type": "module",
-  "description": "Delete a conversation from the DSH sidebar instead of only archiving it, choosing which of its subagent and forked conversations go with it — and delete many at once from the trash icon beside the workspace search. / 在会话菜单里真正删除对话，并可勾选连带删除哪些子智能体会话与派生对话；工作区搜索图标左侧另有批量删除入口。",
+  "description": "Delete a conversation from the DSH sidebar instead of only archiving it, and see the whole family it spawned — every subagent session and derived conversation, nested — before choosing which of them go with it; delete many at once from the trash icon beside the workspace search. / 在会话菜单里真正删除对话；确认框会把整个家族（子智能体、派生对话及其下一层）按层级画出来，删之前先看得见，并可勾选连带删除哪些；工作区搜索图标左侧另有批量删除入口。",
   "license": "MIT",
   "author": "Lzcdebear",
   "icon": "./icon.svg",
   "meta": {
     "title": "会话删除 / Session Delete",
-    "description": "会话「⋯」菜单里多一项「删除会话」：先列出它的子智能体会话与派生对话，可折叠、可逐项勾选，确认后删掉日志、工程记录与投影缓存，不只是归档隐藏。工作区搜索图标左侧另有批量删除入口，按工作区分区列出全部会话，勾母会话连带子会话，也可以单独勾选子会话。"
+    "description": "会话「⋯」菜单里多一项「删除会话」：确认框会把整个家族按层级画成一棵树（子智能体会话、派生对话，以及派生对话自己带出的下一层，可折叠、可逐项勾选），这是 DSH 里唯一能看清这种父子关系的地方；确认后删掉日志、工程记录与投影缓存，不只是归档隐藏。工作区搜索图标左侧另有批量删除入口，按工作区分区列出全部会话，勾母会话连带子会话，也可以单独勾选子会话。"
   },
   "keywords": [
     "deepseek-harness",
@@ -21,11 +21,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Lzcdebear/dsh-delete-session.git"
+    "url": "git+https://github.com/Lzcdebear/better-dsh-session-deletetool.git"
   },
-  "homepage": "https://github.com/Lzcdebear/dsh-delete-session#readme",
+  "homepage": "https://github.com/Lzcdebear/better-dsh-session-deletetool#readme",
   "bugs": {
-    "url": "https://github.com/Lzcdebear/dsh-delete-session/issues"
+    "url": "https://github.com/Lzcdebear/better-dsh-session-deletetool/issues"
   },
   "exports": {
     ".": "./host.js",

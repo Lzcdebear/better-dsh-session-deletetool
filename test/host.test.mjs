@@ -97,10 +97,10 @@ async function call(state, path, request) {
   return response
 }
 
-const DELETE = '/dsh-session-delete/delete'
-const INSPECT = '/dsh-session-delete/inspect'
-const CATALOG = '/dsh-session-delete/catalog'
-const BATCH = '/dsh-session-delete/delete-batch'
+const DELETE = '/better-dsh-session-deletetool/delete'
+const INSPECT = '/better-dsh-session-deletetool/inspect'
+const CATALOG = '/better-dsh-session-deletetool/catalog'
+const BATCH = '/better-dsh-session-deletetool/delete-batch'
 
 /** Build a temporary Session artifact directory that looks like the real one. */
 async function fakeArtifact(sessionId) {

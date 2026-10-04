@@ -1,5 +1,5 @@
 /**
- * dsh-session-delete — Client half.
+ * better-dsh-session-deletetool — Client half.
  *
  * Adds one row, "删除会话", to a Session's "⋯" menu at order 500 (after the
  * shipped pin 100 / rename 200 / fork 300 / archive 400), plus the confirmation
@@ -21,17 +21,17 @@
  * return keep working over the added row.
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-session-delete',
+  id: 'better-dsh-session-deletetool',
   factory(require) {
     const React = require('react')
     const h = React.createElement
     const { useCallback, useEffect, useRef, useState, useSyncExternalStore } = React
 
-    const NS = 'session-delete'
-    const DELETE_PATH = '/dsh-session-delete/delete'
-    const INSPECT_PATH = '/dsh-session-delete/inspect'
-    const CATALOG_PATH = '/dsh-session-delete/catalog'
-    const BATCH_PATH = '/dsh-session-delete/delete-batch'
+    const NS = 'better-dsh-session-deletetool'
+    const DELETE_PATH = '/better-dsh-session-deletetool/delete'
+    const INSPECT_PATH = '/better-dsh-session-deletetool/inspect'
+    const CATALOG_PATH = '/better-dsh-session-deletetool/catalog'
+    const BATCH_PATH = '/better-dsh-session-deletetool/delete-batch'
 
     const DICT = {
       zh: {
@@ -421,7 +421,7 @@ window.__ModuleLoader__.load({
         const node = document.createElement('button')
         node.type = 'button'
         node.className = 'dsd-anchor'
-        node.setAttribute('data-dsh-plugin', 'session-delete')
+        node.setAttribute('data-dsh-plugin', 'better-dsh-session-deletetool')
         node.title = t('icon.batch')
         node.setAttribute('aria-label', t('icon.batch'))
         // The button is a plain DOM node, so the glyph goes in as markup; it is
@@ -1396,7 +1396,7 @@ window.__ModuleLoader__.load({
 
     /** Mount the plugin's stylesheet with its components. */
     function Styles() {
-      return h('style', { 'data-dsh-plugin': 'session-delete', children: CSS })
+      return h('style', { 'data-dsh-plugin': 'better-dsh-session-deletetool', children: CSS })
     }
 
     /** The menu row and its dialog, wrapped so the stylesheet travels with them. */
@@ -1404,7 +1404,7 @@ window.__ModuleLoader__.load({
       function StyledComponent(props) {
         return h(React.Fragment, null, h(Styles, { key: 'style' }), h(Component, { ...props, key: 'body' }))
       }
-      StyledComponent.displayName = `SessionDelete(${Component.name})`
+      StyledComponent.displayName = `BetterSessionDeletetool(${Component.name})`
       return StyledComponent
     }
 
@@ -1413,18 +1413,18 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         const locale = ctx.get('locale')
         if (locale !== undefined && typeof locale.register === 'function' && typeof locale.bind === 'function') {
-          ctx.effect(() => locale.register(NS, { zh: DICT.zh, en: DICT.en }), 'session-delete: locale')
+          ctx.effect(() => locale.register(NS, { zh: DICT.zh, en: DICT.en }), 'better-dsh-session-deletetool: locale')
           translate = locale.bind(NS)
         }
         ctx.slots.inject('sidebar.workspaces.session.menu.item', () =>
           ctx.slots.register(
-            { name: 'sidebar.workspaces.session.menu.item', id: 'session-delete', order: 500, locale: NS },
+            { name: 'sidebar.workspaces.session.menu.item', id: 'better-dsh-session-deletetool', order: 500, locale: NS },
             WithStyles(DeleteSessionMenuItem),
           ),
         )
         ctx.slots.inject('shell.overlay', () =>
           ctx.slots.register(
-            { name: 'shell.overlay', id: 'session-delete-dialog', order: 60, locale: NS },
+            { name: 'shell.overlay', id: 'better-dsh-session-deletetool-dialog', order: 60, locale: NS },
             WithStyles(DeleteSessionDialog),
           ),
         )
@@ -1434,13 +1434,13 @@ window.__ModuleLoader__.load({
         // shadowing the shipped WorkspaceBrowser that owns that `single` slot.
         ctx.slots.inject('sidebar.footer.action', () =>
           ctx.slots.register(
-            { name: 'sidebar.footer.action', id: 'session-delete-bulk', order: 40, locale: NS },
+            { name: 'sidebar.footer.action', id: 'better-dsh-session-deletetool-bulk', order: 40, locale: NS },
             WithStyles(BulkDeleteAnchor),
           ),
         )
         ctx.slots.inject('shell.overlay', () =>
           ctx.slots.register(
-            { name: 'shell.overlay', id: 'session-delete-bulk-dialog', order: 61, locale: NS },
+            { name: 'shell.overlay', id: 'better-dsh-session-deletetool-bulk-dialog', order: 61, locale: NS },
             WithStyles(BulkDeleteDialog),
           ),
         )

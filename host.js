@@ -1,5 +1,5 @@
 /**
- * dsh-session-delete — Host half.
+ * better-dsh-session-deletetool — Host half.
  *
  * DSH can only archive a conversation: `ctx.workspaceRegistry.archiveSession()`
  * hides a Session from the sidebar and keeps every artifact. The persistence
@@ -79,10 +79,10 @@ export const __test = globalThis.__DSD_TEST__ === true
   ? { buildCatalog, catalogSessions, normalizeRoots, workspaceLabel }
   : undefined
 
-const DELETE_PATH = '/dsh-session-delete/delete'
-const INSPECT_PATH = '/dsh-session-delete/inspect'
-const CATALOG_PATH = '/dsh-session-delete/catalog'
-const BATCH_PATH = '/dsh-session-delete/delete-batch'
+const DELETE_PATH = '/better-dsh-session-deletetool/delete'
+const INSPECT_PATH = '/better-dsh-session-deletetool/inspect'
+const CATALOG_PATH = '/better-dsh-session-deletetool/catalog'
+const BATCH_PATH = '/better-dsh-session-deletetool/delete-batch'
 
 /** Session ids are opaque strings, but never paths: keep them to safe segments. */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
@@ -134,45 +134,45 @@ class DeleteRefusal extends Error {
 export function apply(ctx) {
   const onDelete = (request, response) => {
     void serveDelete(ctx, request, response).catch((error) => {
-      ctx.logger?.warn?.(`[session-delete] route failure: ${messageOf(error)}`)
+      ctx.logger?.warn?.(`[better-dsh-session-deletetool] route failure: ${messageOf(error)}`)
       send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
     })
   }
   const onInspect = (request, response) => {
     void serveInspect(ctx, request, response).catch((error) => {
-      ctx.logger?.warn?.(`[session-delete] route failure: ${messageOf(error)}`)
+      ctx.logger?.warn?.(`[better-dsh-session-deletetool] route failure: ${messageOf(error)}`)
       send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
     })
   }
   const onCatalog = (request, response) => {
     void serveCatalog(ctx, request, response).catch((error) => {
-      ctx.logger?.warn?.(`[session-delete] route failure: ${messageOf(error)}`)
+      ctx.logger?.warn?.(`[better-dsh-session-deletetool] route failure: ${messageOf(error)}`)
       send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
     })
   }
   const onBatch = (request, response) => {
     void serveBatch(ctx, request, response).catch((error) => {
-      ctx.logger?.warn?.(`[session-delete] route failure: ${messageOf(error)}`)
+      ctx.logger?.warn?.(`[better-dsh-session-deletetool] route failure: ${messageOf(error)}`)
       send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
     })
   }
   ctx.effect(
     () => ctx.webServer.register({ kind: 'exact', path: DELETE_PATH, handler: onDelete }),
-    'session-delete: delete route',
+    'better-dsh-session-deletetool: delete route',
   )
   ctx.effect(
     () => ctx.webServer.register({ kind: 'exact', path: INSPECT_PATH, handler: onInspect }),
-    'session-delete: inspect route',
+    'better-dsh-session-deletetool: inspect route',
   )
   ctx.effect(
     () => ctx.webServer.register({ kind: 'exact', path: CATALOG_PATH, handler: onCatalog }),
-    'session-delete: catalog route',
+    'better-dsh-session-deletetool: catalog route',
   )
   ctx.effect(
     () => ctx.webServer.register({ kind: 'exact', path: BATCH_PATH, handler: onBatch }),
-    'session-delete: batch route',
+    'better-dsh-session-deletetool: batch route',
   )
-  ctx.logger?.info?.(`[session-delete] routes mounted at ${DELETE_PATH}, ${INSPECT_PATH}, ${CATALOG_PATH} and ${BATCH_PATH}`)
+  ctx.logger?.info?.(`[better-dsh-session-deletetool] routes mounted at ${DELETE_PATH}, ${INSPECT_PATH}, ${CATALOG_PATH} and ${BATCH_PATH}`)
 }
 
 /**
@@ -322,7 +322,7 @@ async function serveBatch(ctx, request, response) {
       const refusal = error instanceof DeleteRefusal
         ? error
         : new DeleteRefusal(500, 'delete-failed', messageOf(error))
-      ctx.logger?.warn?.(`[session-delete] batch ${root.sessionId}: ${refusal.code}: ${refusal.message}`)
+      ctx.logger?.warn?.(`[better-dsh-session-deletetool] batch ${root.sessionId}: ${refusal.code}: ${refusal.message}`)
       failed.push({ sessionId: root.sessionId, code: refusal.code, message: refusal.message })
     }
   }
@@ -1353,7 +1353,7 @@ function answer(ctx, response, error, sessionId) {
   const refusal = error instanceof DeleteRefusal
     ? error
     : new DeleteRefusal(500, 'delete-failed', messageOf(error))
-  ctx.logger?.warn?.(`[session-delete] ${sessionId}: ${refusal.code}: ${refusal.message}`)
+  ctx.logger?.warn?.(`[better-dsh-session-deletetool] ${sessionId}: ${refusal.code}: ${refusal.message}`)
   send(response, refusal.status, { ok: false, code: refusal.code, message: refusal.message, ...refusal.details })
 }
 
