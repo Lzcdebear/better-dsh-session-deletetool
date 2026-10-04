@@ -99,6 +99,8 @@ async function call(state, path, request) {
 
 const DELETE = '/dsh-session-delete/delete'
 const INSPECT = '/dsh-session-delete/inspect'
+const CATALOG = '/dsh-session-delete/catalog'
+const BATCH = '/dsh-session-delete/delete-batch'
 
 /** Build a temporary Session artifact directory that looks like the real one. */
 async function fakeArtifact(sessionId) {
@@ -113,11 +115,13 @@ async function fakeArtifact(sessionId) {
 /**
  * Host fakes for one existing Session, optionally with descendants.
  *
- * `children` feeds the durable subagent catalog. `lineage` feeds the observed
- * Session corpus (`sessionQuery.listSessions`), whose headers carry
- * `parentSession` / `origin` exactly as DSH writes them; `lineage: null` models a
- * profile without the query service. `extraDirectories` gives artifact paths to
- * descendants that only the lineage names.
+ * `children` feeds the `subagents.listDescendants` roster. `lineage` feeds the
+ * observed Session corpus (`sessionQuery.listSessions`), whose headers carry
+ * `parentSession` / `origin` exactly as DSH writes them; the same corpus answers
+ * `observeSession` per Session, so each parent's `subagentCatalog` is derived from
+ * the spawnee's own header and the two sources cannot disagree. `lineage: null`
+ * models a profile without the query service at all. `extraDirectories` gives
+ * artifact paths to descendants that only the corpus names.
  */
 function servicesFor({
   sessionId,
@@ -127,6 +131,9 @@ function servicesFor({
   children = [],
   lineage = [],
   extraDirectories = {},
+  untitled = [],
+  /** Per-parent `subagentCatalog` overrides: `{ [parentId]: [childId, …] }`. */
+  catalog = {},
 }) {
   const calls = { detached: 0, unarchived: 0, unpinned: 0, deleted: [], killedTerminals: [] }
   const directories = new Map([
@@ -163,11 +170,37 @@ function servicesFor({
     ...(lineage === null ? {} : {
       sessionQuery: {
         async listSessions() { return lineage },
+        // The shipped shape: the folded title snapshot is `{ session, title }`
+        // where the nested title is the observation, not a string. A Session
+        // whose log carries no title event is fulfilled without it.
         async readTitleSnapshots(ids) {
           return ids.map((id) => ({
             status: 'fulfilled',
-            value: { session: { id }, title: `标题 ${id.slice(-4)}` },
+            value: untitled.includes(id)
+              ? { session: { id } }
+              : { session: { id }, title: { title: `标题 ${id.slice(-4)}`, messageSeqs: [], source: { kind: 'fallback' } } },
           }))
+        },
+        // Each Session's own `subagentCatalog`: the parent-owned record of the
+        // children it spawned, derived here from the spawnee's own header so the
+        // fixture cannot disagree with itself. A Session with no spawned children
+        // still answers, with an empty catalog — that is what makes a leaf a leaf.
+        async observeSession(id) {
+          // An explicit override stands in for a catalog the spawnee's header
+          // cannot express (a grandchild whose own header is not on the corpus).
+          const override = catalog[id]
+          const spawned = (override ?? lineage
+            .filter((record) => record?.header?.parentSession === id && record.header.origin === 'subagent')
+            .map((record) => record.header.id))
+            .map((childId) => ({ id: childId, createdAt: 0, mode: 'one-shot' }))
+          // The lease's own shape: `retain()` plus `Symbol.dispose`, and no
+          // `release()` — the walk must free what it read.
+          return {
+            header: { id },
+            projections: { values: { subagentCatalog: spawned } },
+            retain() { return this },
+            [Symbol.dispose]() {},
+          }
         },
       },
     }),
@@ -190,10 +223,11 @@ function servicesFor({
   }
 }
 
-test('registers the delete and inspect routes', () => {
+test('registers the delete, inspect, catalog and batch routes', () => {
   const { state } = fakeContext()
-  assert.deepEqual([...state.routes.keys()].sort(), [DELETE, INSPECT].sort())
+  assert.deepEqual([...state.routes.keys()].sort(), [DELETE, INSPECT, CATALOG, BATCH].sort())
   assert.equal(state.routes.get(DELETE).kind, 'exact')
+  assert.equal(state.routes.get(CATALOG).kind, 'exact')
 })
 
 test('deletes the artifact directory, the accounting and the checkpoint', async () => {
@@ -377,6 +411,81 @@ test('labels both relations in the state report', async () => {
   )
   // Each row carries what the dialog shows beside the checkbox.
   assert.deepEqual(response.payload.descendants.items.map((entry) => typeof entry.title), ['string', 'string'])
+})
+
+test('inspect nests a subagent under the child conversation that spawned it', async () => {
+  const sessionId = 'session-99999999-aaaa-bbbb-cccc-dddddddddddd'
+  const forkId = 'session-fork04-0000-0000-0000-0000000000f4'
+  const nestedSubagentId = 'session-subag2-0000-0000-0000-0000000000a2'
+  const directory = await fakeArtifact(sessionId)
+  const forkDirectory = await fakeArtifact(forkId)
+  const nestedDirectory = await fakeArtifact(nestedSubagentId)
+  const services = servicesFor({
+    sessionId,
+    directory,
+    extraDirectories: { [forkId]: forkDirectory, [nestedSubagentId]: nestedDirectory },
+    // The shape the user hit: a forked conversation, and a subagent the FORK
+    // spawned — a subagent that appears in no catalog hanging off the target.
+    lineage: [
+      { header: { id: forkId, parentSession: sessionId, isSeeded: true, createdAt: 2 } },
+      { header: { id: nestedSubagentId, parentSession: forkId, origin: 'subagent', createdAt: 3 } },
+    ],
+  })
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, INSPECT, fakeRequest({
+    method: 'GET',
+    url: `${INSPECT}?sessionId=${sessionId}`,
+  }))
+
+  assert.equal(response.status, 200)
+  // Deepest first is the delete order; the dialog re-arranges it for display.
+  assert.deepEqual(
+    response.payload.descendants.items.map((entry) => [entry.id, entry.kind, entry.depth, entry.parentId]),
+    [
+      [nestedSubagentId, 'subagent', 2, forkId],
+      [forkId, 'derived', 1, sessionId],
+    ],
+  )
+  assert.equal(response.payload.descendants.count, 2)
+  assert.equal(response.payload.descendants.subagents, 1)
+  assert.equal(response.payload.descendants.derived, 1)
+})
+
+test('inspect finds a grandchild subagent the catalog knows and the lineage does not', async () => {
+  const sessionId = 'session-12121212-3434-5656-7878-909090909090'
+  const childId = 'session-child5-0000-0000-0000-000000000005'
+  const grandchildId = 'session-subag3-0000-0000-0000-0000000000a3'
+  const directory = await fakeArtifact(sessionId)
+  const childDirectory = await fakeArtifact(childId)
+  const grandchildDirectory = await fakeArtifact(grandchildId)
+  const services = servicesFor({
+    sessionId,
+    directory,
+    extraDirectories: { [childId]: childDirectory, [grandchildId]: grandchildDirectory },
+    // Only the child's header is on the corpus: the grandchild is reachable
+    // through the child's own catalog alone, which is the case the walk exists
+    // for. `subagents.listDescendants` answers with the target's DIRECT children
+    // only, exactly as a service that could not descend would.
+    lineage: [{ header: { id: childId, parentSession: sessionId, origin: 'subagent', createdAt: 2 } }],
+    children: [{ id: childId, directory: childDirectory }],
+    catalog: { [childId]: [grandchildId] },
+  })
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, INSPECT, fakeRequest({
+    method: 'GET',
+    url: `${INSPECT}?sessionId=${sessionId}`,
+  }))
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(
+    response.payload.descendants.items.map((entry) => [entry.id, entry.kind, entry.depth, entry.parentId]),
+    [
+      [grandchildId, 'subagent', 2, childId],
+      [childId, 'subagent', 1, sessionId],
+    ],
+  )
 })
 
 test('inspect names the descendants a delete would take with it', async () => {
@@ -566,4 +675,116 @@ test('closes the shells a deleted Session owned', async () => {
   assert.equal(response.payload.terminalsKilled, 2)
   assert.deepEqual(services.calls.killedTerminals.sort(), ['term-1', 'term-2'])
   assert.deepEqual(services.terminals.list(agent), [])
+})
+
+test('catalog groups sessions by workspace and names each row\'s place in its family', async () => {
+  const parentId = 'session-aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const forkedId = 'session-bbbb2222-cccc-dddd-eeee-ffffffffffff'
+  const spawnedId = 'session-cccc3333-dddd-eeee-ffff-000000000000'
+  const lonelyId = 'session-dddd4444-eeee-ffff-0000-111111111111'
+  const orphanId = 'session-eeee5555-ffff-0000-1111-222222222222'
+  const homelessId = 'session-ffff6666-0000-1111-2222-333333333333'
+  const directory = await fakeArtifact(parentId)
+  const services = servicesFor({
+    sessionId: parentId,
+    directory,
+    lineage: [
+      { header: { id: parentId, createdAt: 400, cwd: 'F:\\OneDrive\\Project_lzc' } },
+      { header: { id: forkedId, createdAt: 300, cwd: 'F:\\OneDrive\\Project_lzc', parentSession: parentId, isSeeded: true } },
+      { header: { id: spawnedId, createdAt: 200, cwd: 'F:\\OneDrive\\Project_lzc', parentSession: parentId, origin: 'subagent' } },
+      { header: { id: lonelyId, createdAt: 100, cwd: 'F:\\Elsewhere' } },
+      { header: { id: orphanId, createdAt: 50, parentSession: 'session-gone', cwd: 'F:\\Nowhere' } },
+      // No cwd and no Workspace account: the only way into the ungrouped section.
+      { header: { id: homelessId, createdAt: 10 } },
+    ],
+    // Sessions whose log carries no title event: with no durable title, the row
+    // has to fall back to its project directory rather than read as untitled.
+    untitled: [parentId, spawnedId],
+  })
+  // The Workspace owns only the first three; the rest fall back to their directory
+  // and then to the ungrouped section.
+  services.workspaceRegistry.list = () => [{
+    id: 'ws-1',
+    title: 'Project_lzc',
+    path: 'F:\\OneDrive\\Project_lzc',
+    sessionIds: [parentId, forkedId, spawnedId],
+    detachSession: async () => {},
+  }]
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, CATALOG, fakeRequest({ method: 'GET' }))
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.payload.workspaces.map((group) => group.title), ['Project_lzc', 'Elsewhere', 'Nowhere', '未归类'])
+  const owned = response.payload.workspaces[0]
+  assert.equal(owned.workspaceId, 'ws-1')
+  // Parents lead their children, and each row says whether it has children.
+  assert.deepEqual(owned.sessions.map((row) => row.id), [parentId, forkedId, spawnedId])
+  assert.deepEqual(owned.sessions.map((row) => row.depth), [0, 1, 1])
+  const parent = owned.sessions[0]
+  assert.equal(parent.hasChildren, true)
+  assert.equal(parent.family, 2)
+  assert.equal(parent.subagents, 1)
+  assert.equal(parent.derived, 1)
+  // A Session with no title event still reads as its project directory; one with
+  // a durable title reads as that title.
+  assert.equal(parent.title, 'Project_lzc')
+  assert.equal(owned.sessions[1].title, `标题 ${forkedId.slice(-4)}`)
+  assert.equal(owned.sessions[2].title, 'Project_lzc')
+  assert.equal(owned.sessions[1].kind, 'derived')
+  assert.equal(owned.sessions[1].parentId, parentId)
+  assert.equal(owned.sessions[2].kind, 'subagent')
+  // A directory no Workspace owns still groups; a Session with no directory at
+  // all is the one case the ungrouped section exists for.
+  assert.equal(response.payload.workspaces[1].workspaceId, null)
+  assert.deepEqual(response.payload.workspaces[1].sessions.map((row) => row.id), [lonelyId])
+  assert.deepEqual(response.payload.workspaces[2].sessions.map((row) => row.id), [orphanId])
+  assert.equal(response.payload.workspaces[2].sessions[0].parentId, undefined)
+  assert.equal(response.payload.workspaces[3].title, '未归类')
+  assert.deepEqual(response.payload.workspaces[3].sessions.map((row) => row.id), [homelessId])
+  assert.deepEqual(response.payload.totals, { workspaces: 4, sessions: 6, ungrouped: 1 })
+})
+
+test('batch delete runs each root and reports only the failures', async () => {
+  const okId = 'session-11112222-3333-4444-5555-666666666666'
+  const missingId = 'session-77778888-9999-aaaa-bbbb-cccccccccccc'
+  const childId = 'session-dddd9999-eeee-ffff-0000-111111111111'
+  const directory = await fakeArtifact(okId)
+  const childDirectory = await fakeArtifact(childId)
+  const services = servicesFor({
+    sessionId: okId,
+    directory,
+    extraDirectories: { [childId]: childDirectory },
+    lineage: [{ header: { id: childId, createdAt: 10, cwd: 'F:\\OneDrive\\Project_lzc', parentSession: okId, origin: 'subagent' } }],
+  })
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, BATCH, fakeRequest({
+    body: JSON.stringify({
+      roots: [
+        { sessionId: okId, descendants: [childId] },
+        { sessionId: missingId, descendants: [] },
+      ],
+    }),
+  }))
+
+  assert.equal(response.status, 200)
+  assert.equal(response.payload.ok, false)
+  assert.deepEqual(response.payload.roots, [okId, missingId])
+  assert.deepEqual(response.payload.removed.map((report) => report.sessionId), [okId])
+  assert.deepEqual(response.payload.failed.map((entry) => [entry.sessionId, entry.code]), [[missingId, 'session-not-found']])
+  // The failing root did not stop the successful one from being removed.
+  await assert.rejects(stat(directory), /ENOENT/)
+  await assert.rejects(stat(childDirectory), /ENOENT/)
+})
+
+test('batch delete refuses a body with no usable root', async () => {
+  const { state } = fakeContext({ services: servicesFor({ sessionId: 'session-x', directory: undefined }) })
+  const empty = await call(state, BATCH, fakeRequest({ body: JSON.stringify({ roots: [] }) }))
+  assert.equal(empty.status, 400)
+  assert.equal(empty.payload.code, 'bad-request')
+  const malformed = await call(state, BATCH, fakeRequest({ body: JSON.stringify({ roots: [{ sessionId: '../etc' }] }) }))
+  assert.equal(malformed.status, 400)
+  const wrongMethod = await call(state, BATCH, fakeRequest({ method: 'GET' }))
+  assert.equal(wrongMethod.status, 405)
 })

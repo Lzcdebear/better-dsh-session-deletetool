@@ -14,19 +14,33 @@
  * then emits `api-session/removed` so connected Clients drop the row — the same
  * event the shipped Session controller emits when a Session is disposed.
  *
- * Descendants are selected, not assumed. Every Session records its parent in its
- * own header (`SessionHeader.parentSession`), and DSH writes that field for every
- * relation it creates: the Subagent runtime sets it with `origin: 'subagent'`, a
- * fork sets it with `isSeeded`, and Agent Teams resolves its roster through the
- * same field. Walking it therefore reaches subagent sessions, conversations
- * forked off this one, and the children a team provisions; the durable
- * `subagentCatalog` projection (`ctx.subagents.listDescendants`) is walked as a
- * second source so a child whose own header no longer reads is still named.
+ * Descendants are selected, not assumed, and the family is read from both durable
+ * relations because neither one alone is complete:
+ *
+ * - **The subagent catalog** — each Session's own `subagentCatalog` projection,
+ *   the parent-owned record of the Sessions it spawned — walked from the target
+ *   downwards, so a subagent is listed under the Session that spawned it rather
+ *   than under the target. (The service's `subagents.listDescendants` is asked as
+ *   well; it needs the live Session store, so it can fail wholesale, which is
+ *   exactly the case the per-parent walk survives.)
+ * - **The header lineage** (`SessionHeader.parentSession`) — the relation the
+ *   catalog has no row for at all, which is what a forked conversation is, plus
+ *   its own view of subagent Sessions and the project directory each child's
+ *   header carries for display naming.
+ *
  * `GET /inspect` returns that family as a list — id, kind, depth, parent, title,
  * whether it is open, and what it is running — and `POST /delete` takes the ids
  * the user ticked. The selection is validated against the Host's own walk, so a
  * crafted request can only ever name Sessions in this lineage. Descendants are
  * removed deepest first, and the family is gathered before anything is removed.
+ *
+ * `GET /catalog` answers the bulk view: every Session the corpus holds, grouped
+ * by the Workspace that owns its `cwd` the way the sidebar groups them, with the
+ * one fact the page cannot derive — which rows are a parent Session and which are
+ * a spawned/forked child — carried per row. `POST /delete-batch` is the same
+ * single-Session delete applied to a list of (root, chosen descendants) pairs, so
+ * the batch path shares the selection validation, the activity gate, and the
+ * removal order with the single path instead of restating them.
  *
  * What may block a delete is RUNNING WORK, never mere residency, and the question
  * is asked once per Session in the delete set: the shipped admission answers for
@@ -55,8 +69,20 @@ import { dirname } from 'node:path'
 /** Services activation waits for; everything else is looked up per request. */
 export const inject = ['webServer']
 
+/**
+ * The pure halves of the bulk routes, exported only for a test run.
+ *
+ * The Loader reads `apply` and `inject`; a test imports this module directly and
+ * sets `globalThis.__DSD_TEST__` before it does.
+ */
+export const __test = globalThis.__DSD_TEST__ === true
+  ? { buildCatalog, catalogSessions, normalizeRoots, workspaceLabel }
+  : undefined
+
 const DELETE_PATH = '/dsh-session-delete/delete'
 const INSPECT_PATH = '/dsh-session-delete/inspect'
+const CATALOG_PATH = '/dsh-session-delete/catalog'
+const BATCH_PATH = '/dsh-session-delete/delete-batch'
 
 /** Session ids are opaque strings, but never paths: keep them to safe segments. */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
@@ -84,6 +110,9 @@ const MAX_DESCENDANTS = 200
 /** How many descendants the state report lists for selection; beyond this only the count is shown. */
 const MAX_LISTED_DESCENDANTS = 300
 
+/** How many roots one bulk delete request may carry before it refuses. */
+const MAX_BATCH_ROOTS = 200
+
 /** How deep the lineage walk may go; a guard against a hand-edited header cycle. */
 const MAX_LINEAGE_DEPTH = 64
 
@@ -99,7 +128,7 @@ class DeleteRefusal extends Error {
 }
 
 /**
- * Register the delete and inspect routes.
+ * Register the delete, inspect, catalog and batch routes.
  * @param {object} ctx - Host Cordis context.
  */
 export function apply(ctx) {
@@ -115,6 +144,18 @@ export function apply(ctx) {
       send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
     })
   }
+  const onCatalog = (request, response) => {
+    void serveCatalog(ctx, request, response).catch((error) => {
+      ctx.logger?.warn?.(`[session-delete] route failure: ${messageOf(error)}`)
+      send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
+    })
+  }
+  const onBatch = (request, response) => {
+    void serveBatch(ctx, request, response).catch((error) => {
+      ctx.logger?.warn?.(`[session-delete] route failure: ${messageOf(error)}`)
+      send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
+    })
+  }
   ctx.effect(
     () => ctx.webServer.register({ kind: 'exact', path: DELETE_PATH, handler: onDelete }),
     'session-delete: delete route',
@@ -123,7 +164,15 @@ export function apply(ctx) {
     () => ctx.webServer.register({ kind: 'exact', path: INSPECT_PATH, handler: onInspect }),
     'session-delete: inspect route',
   )
-  ctx.logger?.info?.(`[session-delete] routes mounted at ${DELETE_PATH} and ${INSPECT_PATH}`)
+  ctx.effect(
+    () => ctx.webServer.register({ kind: 'exact', path: CATALOG_PATH, handler: onCatalog }),
+    'session-delete: catalog route',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({ kind: 'exact', path: BATCH_PATH, handler: onBatch }),
+    'session-delete: batch route',
+  )
+  ctx.logger?.info?.(`[session-delete] routes mounted at ${DELETE_PATH}, ${INSPECT_PATH}, ${CATALOG_PATH} and ${BATCH_PATH}`)
 }
 
 /**
@@ -193,6 +242,330 @@ async function serveInspect(ctx, request, response) {
   } catch (error) {
     answer(ctx, response, error, sessionId)
   }
+}
+
+/**
+ * Own one catalog request: hand the bulk dialog every Session there is, grouped
+ * the way the sidebar groups them.
+ * @param {object} ctx - Host Cordis context.
+ * @param {import('node:http').IncomingMessage} request - the request.
+ * @param {import('node:http').ServerResponse} response - the response.
+ */
+async function serveCatalog(ctx, request, response) {
+  if (request.method !== 'GET') {
+    send(response, 405, { ok: false, code: 'method-not-allowed', message: 'only GET is accepted' })
+    return
+  }
+  if (!sameOrigin(request)) {
+    send(response, 403, { ok: false, code: 'untrusted-origin', message: 'the request did not come from this Harness page' })
+    return
+  }
+  try {
+    send(response, 200, await buildCatalog(ctx))
+  } catch (error) {
+    answer(ctx, response, error, 'catalog')
+  }
+}
+
+/**
+ * Own one bulk delete request: the same delete, once per selected root.
+ *
+ * Each root keeps its own selection, so the bulk dialog can carry the
+ * per-family checkbox state the single dialog offers. A root that fails is
+ * reported as a failure line and the remaining roots are still attempted: a
+ * batch is a sequence of independent deletes, not one transaction.
+ * @param {object} ctx - Host Cordis context.
+ * @param {import('node:http').IncomingMessage} request - the request.
+ * @param {import('node:http').ServerResponse} response - the response.
+ */
+async function serveBatch(ctx, request, response) {
+  if (request.method !== 'POST') {
+    send(response, 405, { ok: false, code: 'method-not-allowed', message: 'only POST is accepted' })
+    return
+  }
+  if (!sameOrigin(request)) {
+    send(response, 403, { ok: false, code: 'untrusted-origin', message: 'the request did not come from this Harness page' })
+    return
+  }
+  let body
+  try {
+    body = JSON.parse(await readBody(request))
+  } catch (error) {
+    send(response, 400, { ok: false, code: 'bad-request', message: messageOf(error) })
+    return
+  }
+  const roots = normalizeRoots(body?.roots)
+  if (roots.length === 0) {
+    send(response, 400, {
+      ok: false,
+      code: 'bad-request',
+      message: 'roots 必须是非空的 { sessionId, descendants } 列表。',
+    })
+    return
+  }
+  if (roots.length > MAX_BATCH_ROOTS) {
+    send(response, 400, {
+      ok: false,
+      code: 'too-many-roots',
+      message: `一次最多处理 ${MAX_BATCH_ROOTS} 个会话，请分批删除。`,
+    })
+    return
+  }
+
+  const stop = body?.stop === true
+  const removed = []
+  const failed = []
+  for (const root of roots) {
+    try {
+      removed.push(await deleteSession(ctx, root.sessionId, { stop, descendants: root.descendants }))
+    } catch (error) {
+      const refusal = error instanceof DeleteRefusal
+        ? error
+        : new DeleteRefusal(500, 'delete-failed', messageOf(error))
+      ctx.logger?.warn?.(`[session-delete] batch ${root.sessionId}: ${refusal.code}: ${refusal.message}`)
+      failed.push({ sessionId: root.sessionId, code: refusal.code, message: refusal.message })
+    }
+  }
+  send(response, 200, {
+    ok: failed.length === 0,
+    roots: roots.map((root) => root.sessionId),
+    removed,
+    failed,
+  })
+}
+
+/**
+ * Read the caller's root list into `{ sessionId, descendants }` pairs.
+ *
+ * A root without a `descendants` array means "every descendant of it", which is
+ * what the bulk dialog sends for a row ticked as a whole family; an empty array
+ * means the row alone. Anything malformed is dropped here, and the caller
+ * reports the resulting empty list.
+ * @param {unknown} value - the request's `roots` field.
+ * @returns {Array<{ sessionId: string, descendants?: string[] }>} the roots.
+ */
+function normalizeRoots(value) {
+  if (!Array.isArray(value)) return []
+  const roots = []
+  const seen = new Set()
+  for (const raw of value) {
+    const sessionId = typeof raw?.sessionId === 'string' ? raw.sessionId.trim() : ''
+    if (!SESSION_ID.test(sessionId) || seen.has(sessionId)) continue
+    seen.add(sessionId)
+    const descendants = Array.isArray(raw?.descendants)
+      ? raw.descendants
+        .filter((id) => typeof id === 'string' && SESSION_ID.test(id.trim()))
+        .map((id) => id.trim())
+      : undefined
+    roots.push({ sessionId, ...(descendants === undefined ? {} : { descendants }) })
+  }
+  return roots
+}
+
+/**
+ * Build the bulk view: every known Session, grouped by its owning Workspace.
+ *
+ * Grouping follows the sidebar. A Session belongs to the Workspace whose
+ * directory matches its header `cwd`, so a Session whose `cwd` no Workspace owns
+ * lands in one "未归类" group. Within a group, a Session that another listed
+ * Session of the same group names as `parentSession` is indented under it; a
+ * Session whose parent is not listed here stays a root.
+ *
+ * Each row carries the one fact the page cannot derive by itself: whether the
+ * Session was spawned as a subagent or forked off another Session, whether it
+ * has children in this group, and how many subagent and derived Sessions hang
+ * off it, so the dialog can offer the same per-family selection the single
+ * dialog offers.
+ * @param {object} ctx - Host Cordis context.
+ * @returns {Promise<object>} `{ ok, workspaces, totals }`.
+ */
+async function buildCatalog(ctx) {
+  const query = ctx.get('sessionQuery')
+  if (query === undefined || typeof query.listSessions !== 'function') {
+    throw new DeleteRefusal(503, 'query-unavailable', 'sessionQuery is not mounted in this profile')
+  }
+  const records = await query.listSessions()
+  const headers = []
+  for (const record of records ?? []) {
+    const header = record?.header
+    if (header !== undefined && typeof header.id === 'string' && SESSION_ID.test(header.id)) headers.push(header)
+  }
+  await attachTitles(ctx, headers)
+
+  const registry = ctx.get('workspaceRegistry')
+  const workspaces = registry !== undefined && typeof registry.list === 'function' ? registry.list() : []
+  const rank = new Map()
+  /** Session id → owning Workspace id, taken from that Workspace's own account. */
+  const ownerOf = new Map()
+  for (const workspace of workspaces) {
+    const id = String(workspace?.id ?? '')
+    if (id !== '' && !rank.has(id)) rank.set(id, rank.size)
+    for (const sessionId of workspace?.sessionIds ?? []) {
+      const key = String(sessionId)
+      if (!ownerOf.has(key)) ownerOf.set(key, id)
+    }
+  }
+
+  const groups = new Map()
+  for (const header of headers) {
+    const owned = ownerOf.get(header.id)
+    const workspace = owned === undefined
+      ? undefined
+      : workspaces.find((entry) => String(entry?.id ?? '') === owned)
+    const cwd = typeof header.cwd === 'string' && header.cwd !== '' ? header.cwd : undefined
+    // The Workspace account leads and the canonical directory follows, the
+    // precedence the sidebar's own grouping uses; anything else is ungrouped.
+    const key = workspace !== undefined ? `w:${owned}` : cwd === undefined ? 'ungrouped' : `c:${cwd}`
+    if (!groups.has(key)) groups.set(key, { workspace, cwd, members: [] })
+    groups.get(key).members.push(header)
+  }
+
+  const sections = []
+  for (const [key, group] of groups) {
+    if (key === 'ungrouped') continue
+    sections.push({
+      key,
+      workspaceId: group.workspace === undefined ? null : String(group.workspace.id),
+      title: group.workspace === undefined ? workspaceLabel(group.cwd) : String(group.workspace.title ?? ''),
+      path: group.workspace === undefined ? String(group.cwd ?? '') : String(group.workspace.path ?? ''),
+      sessions: await catalogSessions(ctx, group.members),
+    })
+  }
+  sections.sort((left, right) => sectionRank(rank, left) - sectionRank(rank, right) || left.title.localeCompare(right.title))
+
+  const ungrouped = groups.get('ungrouped')
+  if (ungrouped !== undefined) {
+    sections.push({
+      key: 'ungrouped',
+      workspaceId: null,
+      title: '未归类',
+      path: '',
+      sessions: await catalogSessions(ctx, ungrouped.members),
+    })
+  }
+
+  return {
+    ok: true,
+    workspaces: sections,
+    totals: {
+      workspaces: sections.length,
+      sessions: headers.length,
+      ungrouped: ungrouped === undefined ? 0 : ungrouped.members.length,
+    },
+  }
+}
+
+/** Where a section sits in the registry's durable order; unknown or absent ids last. */
+function sectionRank(rank, section) {
+  if (section.workspaceId === null || section.workspaceId === undefined) return Number.MAX_SAFE_INTEGER
+  return rank.has(section.workspaceId) ? rank.get(section.workspaceId) : Number.MAX_SAFE_INTEGER - 1
+}
+
+/**
+ * One group's rows: lineage depth, parent/child flags and family counts.
+ * @param {object} ctx - Host Cordis context.
+ * @param {object[]} members - the group's headers.
+ * @returns {Promise<object[]>} the rows, parents before their children.
+ */
+async function catalogSessions(ctx, members) {
+  const inGroup = new Set(members.map((header) => header.id))
+  const childrenOf = new Map()
+  for (const header of members) {
+    const parent = typeof header.parentSession === 'string' ? header.parentSession : undefined
+    // A parent outside this group is not rendered here, so the row stays a root:
+    // indenting it under a row that does not exist would read as a lost row.
+    if (parent === undefined || !inGroup.has(parent) || parent === header.id) continue
+    if (!childrenOf.has(parent)) childrenOf.set(parent, [])
+    childrenOf.get(parent).push(header)
+  }
+
+  const depthOf = new Map()
+  const depthOfId = (id, guard) => {
+    if (depthOf.has(id)) return depthOf.get(id)
+    if (guard.has(id)) return 0
+    guard.add(id)
+    const header = members.find((entry) => entry.id === id)
+    const parent = typeof header?.parentSession === 'string' ? header.parentSession : undefined
+    const value = parent === undefined || !inGroup.has(parent) || parent === id ? 0 : depthOfId(parent, guard) + 1
+    depthOf.set(id, Math.min(value, MAX_LINEAGE_DEPTH))
+    return depthOf.get(id)
+  }
+  for (const header of members) depthOfId(header.id, new Set())
+
+  const rows = []
+  for (const header of members) {
+    const parent = typeof header.parentSession === 'string' && inGroup.has(header.parentSession) && header.parentSession !== header.id
+      ? header.parentSession
+      : undefined
+    const children = childrenOf.get(header.id) ?? []
+    const runtime = runtimeOf(ctx, header.id)
+    const activity = await catalogActivity(ctx, header.id, runtime)
+    // Display name, resolved here so the row never reads as untitled: the
+    // durable title when the log carries one, else the project directory's final
+    // segment, the same order the sidebar's own rows use.
+    const named = typeof header.title === 'string' && header.title.trim() !== ''
+      ? header.title
+      : workspaceTitleOf(header.cwd)
+    rows.push({
+      id: header.id,
+      kind: header.origin === 'subagent' ? DESCENDANT_KINDS.subagent : parent === undefined ? 'root' : DESCENDANT_KINDS.derived,
+      depth: depthOf.get(header.id) ?? 0,
+      createdAt: typeof header.createdAt === 'number' ? header.createdAt : 0,
+      hasChildren: children.length > 0,
+      family: children.length,
+      subagents: children.filter((child) => child.origin === 'subagent').length,
+      derived: children.filter((child) => child.origin !== 'subagent').length,
+      ...(parent === undefined ? {} : { parentId: parent }),
+      ...(named === '' ? {} : { title: named }),
+      ...(typeof header.cwd === 'string' && header.cwd !== '' ? { cwd: header.cwd } : {}),
+      ...(header.isSeeded === true ? { seeded: true } : {}),
+      ...(header.origin === 'subagent' ? { origin: 'subagent' } : {}),
+      ...(typeof header.agentPreset === 'string' && header.agentPreset !== '' ? { agentPreset: header.agentPreset } : {}),
+      ...runtime,
+      activity,
+    })
+  }
+
+  // Parents before their children, so a family reads as one block; each level is
+  // newest-first, the order the sidebar's own list uses.
+  const newestFirst = (left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id)
+  const sorted = []
+  const emitted = new Set()
+  const walk = (parentId) => {
+    const children = rows.filter((row) => row.parentId === parentId).sort(newestFirst)
+    for (const child of children) {
+      if (emitted.has(child.id)) continue
+      emitted.add(child.id)
+      sorted.push(child)
+      walk(child.id)
+    }
+  }
+  const roots = rows.filter((row) => row.parentId === undefined).sort(newestFirst)
+  for (const root of roots) {
+    if (emitted.has(root.id)) continue
+    emitted.add(root.id)
+    sorted.push(root)
+    walk(root.id)
+  }
+  for (const row of rows.sort(newestFirst)) {
+    if (emitted.has(row.id)) continue
+    emitted.add(row.id)
+    sorted.push(row)
+  }
+  return sorted
+}
+
+/**
+ * The display label for a directory no Workspace owns: its final segment, the
+ * way the registry titles a Workspace it creates.
+ * @param {string|undefined} path - a directory path.
+ * @returns {string} the label.
+ */
+function workspaceLabel(path) {
+  const cleaned = String(path ?? '').replace(/[\\/]+$/, '')
+  if (cleaned === '') return '未归类'
+  const segment = cleaned.slice(Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\')) + 1)
+  return segment === '' ? cleaned : segment
 }
 
 /**
@@ -409,6 +782,27 @@ async function gatherActivities(ctx, ids) {
 
 /**
  * Read the descendant set without applying the delete cap, for the state report.
+ *
+ * Two durable sources, merged by the closest depth:
+ *
+ * 1. **The subagent catalog**, read per parent through the parent Session's own
+ *    `subagentCatalog` projection, walked from the target downwards. This is the
+ *    relation that carries no header field: every row is a Session the parent
+ *    spawned, and walking it is what puts a subagent under the child that
+ *    spawned it rather than under the target. The service's own
+ *    `subagents.listDescendants` is asked as well, as a second opinion, because
+ *    this walk reads sessions one at a time and a single unreadable parent must
+ *    not take its whole branch with it.
+ * 2. **The header lineage** (`SessionHeader.parentSession`), which covers forked
+ *    conversations — the relation that never appears in any catalog — plus its
+ *    own view of subagent sessions, and the project directory each child's header
+ *    carries for display naming.
+ *
+ * The result is the reachable family: a child is included when the lineage or a
+ * catalog links it to the target, or to another child that is already included.
+ * A Session whose parent header names an id outside the corpus is not reachable
+ * this way, yet it can still be a live fork of the target, so it is included too
+ * — deleting it is no worse than deleting it through the fork's own row.
  * @param {object} ctx - Host Cordis context.
  * @param {string} sessionId - the Session whose descendants are wanted.
  * @param {string[]} warnings - collector for recoverable failures.
@@ -416,40 +810,71 @@ async function gatherActivities(ctx, ids) {
  */
 async function gatherDescendants(ctx, sessionId, warnings) {
   const collected = new Map()
+  /** The header lineage, indexed by parent, for the reachability pass. */
+  const childrenByParent = new Map()
 
   /**
-   * One discovered child. The closest depth wins, a subagent label outranks a
-   * derived one, and the first parent that named it is kept for indentation.
+   * One discovered child, keyed by id. The closest depth wins, a subagent label
+   * outranks a derived one, and the first parent that named it is kept for
+   * indentation. The project directory comes only from the lineage walk, which
+   * reads it off the child's own header; the catalog carries no path, so a child
+   * known only through the catalog falls back to its title and then its id.
    */
-  const add = (rawId, depth, kind, parentId) => {
+  const add = (rawId, depth, kind, parentId, cwd) => {
     if (typeof rawId !== 'string' || rawId === sessionId || !SESSION_ID.test(rawId)) return
     const parent = typeof parentId === 'string' && SESSION_ID.test(parentId) ? parentId : undefined
+    const path = typeof cwd === 'string' && cwd !== '' ? cwd : undefined
     const existing = collected.get(rawId)
     if (existing === undefined) {
-      collected.set(rawId, { id: rawId, depth, kind, ...(parent === undefined ? {} : { parentId: parent }) })
+      collected.set(rawId, {
+        id: rawId,
+        depth,
+        kind,
+        ...(parent === undefined ? {} : { parentId: parent }),
+        ...(path === undefined ? {} : { cwd: path }),
+      })
       return
     }
     existing.depth = Math.min(existing.depth, depth)
     if (kind === DESCENDANT_KINDS.subagent) existing.kind = DESCENDANT_KINDS.subagent
     if (existing.parentId === undefined && parent !== undefined) existing.parentId = parent
+    if (existing.cwd === undefined && path !== undefined) existing.cwd = path
   }
 
-  // 1. The durable lineage every Session records in its own header.
+  // 1. The header lineage every Session records, indexed by parent.
   const query = ctx.get('sessionQuery')
+  const known = new Set([sessionId])
   if (query === undefined || typeof query.listSessions !== 'function') {
-    warnings.push('sessionQuery 服务不可用，派生对话没有一并清理')
+    warnings.push('sessionQuery 服务不可用，派生对话与子智能体的血缘没有读到')
   } else {
     try {
-      walkLineage(await query.listSessions(), sessionId, add)
+      for (const record of await query.listSessions()) {
+        const header = record?.header
+        if (header === undefined || typeof header.id !== 'string' || !SESSION_ID.test(header.id)) continue
+        known.add(header.id)
+        const parent = typeof header.parentSession === 'string' ? header.parentSession : undefined
+        if (parent === undefined) continue
+        if (!childrenByParent.has(parent)) childrenByParent.set(parent, [])
+        childrenByParent.get(parent).push(header)
+      }
     } catch (error) {
-      warnings.push(`读取会话血缘失败，派生对话没有清理：${messageOf(error)}`)
+      warnings.push(`读取会话血缘失败，派生对话与子智能体的血缘没有读到：${messageOf(error)}`)
     }
   }
 
-  // 2. The durable subagent catalog, as a second source.
+  // 2. The subagent catalog, walked from the target down through each parent's own
+  //    direct children, so every subagent hangs under the Session that spawned it.
+  const walk = await walkSubagentCatalog(ctx, sessionId, warnings)
+  for (const node of walk) {
+    add(node.id, node.depth, DESCENDANT_KINDS.subagent, node.parentId, node.cwd)
+  }
+
+  // 3. The catalog service's own descendant list, merged for depth and coverage:
+  //    it reaches children the per-parent walk could not read, and it cannot
+  //    invent an id this family has never seen.
   const subagents = ctx.get('subagents')
   if (subagents === undefined || typeof subagents.listDescendants !== 'function') {
-    warnings.push('subagents 服务不可用，子智能体会话名册没有读到')
+    warnings.push('subagents 服务不可用，子智能体名册没有读到')
   } else {
     try {
       const entries = await subagents.listDescendants(sessionId)
@@ -459,7 +884,7 @@ async function gatherDescendants(ctx, sessionId, warnings) {
             entry?.id,
             typeof entry?.depth === 'number' ? entry.depth : 1,
             DESCENDANT_KINDS.subagent,
-            entry?.parentId,
+            typeof entry?.parentId === 'string' ? entry.parentId : undefined,
           )
         }
       }
@@ -468,83 +893,191 @@ async function gatherDescendants(ctx, sessionId, warnings) {
     }
   }
 
+  // 4. The lineage's own children of every reachable Session: subagent Sessions
+  //    whose catalog row is gone, and forked conversations, which have no row at
+  //    all. Breadth-first, so each child's depth is its distance from the target.
+  const reachable = new Set([sessionId])
+  let frontier = [sessionId]
+  for (let depth = 1; frontier.length > 0 && depth <= MAX_LINEAGE_DEPTH; depth += 1) {
+    const next = []
+    for (const parentId of frontier) {
+      for (const header of childrenByParent.get(parentId) ?? []) {
+        if (reachable.has(header.id)) continue
+        reachable.add(header.id)
+        const knownChild = collected.get(header.id)
+        add(
+          header.id,
+          depth,
+          header.origin === 'subagent' ? DESCENDANT_KINDS.subagent : DESCENDANT_KINDS.derived,
+          parentId,
+          header.cwd,
+        )
+        // The lineage found this child where the catalog did not, so the catalog
+        // walk never descended through it: queue it so its own subagents follow.
+        if (knownChild === undefined) next.push(header.id)
+      }
+    }
+    frontier = next
+  }
+
+  // 5. A fork whose parent header names an id the corpus no longer holds, yet
+  //    which carries the target's own project directory: unreachable by structure,
+  //    still part of this family in practice.
+  try {
+    const root = ctx.get('sessionPersistence')
+    const rootHeader = root === undefined || typeof root.stat !== 'function'
+      ? undefined
+      : (await root.stat(sessionId))?.header
+    const rootCwd = typeof rootHeader?.cwd === 'string' ? rootHeader.cwd : undefined
+    if (rootCwd !== undefined) {
+      for (const [, list] of childrenByParent) {
+        for (const header of list) {
+          if (reachable.has(header.id) || header.cwd !== rootCwd) continue
+          const parent = typeof header.parentSession === 'string' ? header.parentSession : ''
+          if (known.has(parent)) continue
+          reachable.add(header.id)
+          add(header.id, 1, DESCENDANT_KINDS.derived, undefined, header.cwd)
+        }
+      }
+    }
+  } catch {
+    // An unreadable root header only costs the orphan fork, which is optional.
+  }
+
   const list = [...collected.values()]
   list.sort((left, right) => right.depth - left.depth || left.id.localeCompare(right.id))
   return attachTitles(ctx, list)
 }
 
 /**
- * Fill in each descendant's title, so the dialog can list names instead of ids.
+ * Walk the durable subagent catalog from one root, deepest structure preserved.
  *
- * Titles are a display nicety: an unavailable query service or a failed read
- * leaves the entries without one, and the Client falls back to the id.
+ * Each level is read from the parent Session's own `subagentCatalog` projection —
+ * the parent-owned record of the Sessions it spawned — so a subagent is placed
+ * under the Session that actually spawned it. The walk is iterative and
+ * cycle-guarded: a hand-edited catalog cannot make it loop, and one unreadable
+ * parent costs that parent's branch rather than the whole walk.
  * @param {object} ctx - Host Cordis context.
- * @param {Array<object>} entries - the gathered descendants.
- * @returns {Promise<Array<object>>} the same entries, with `title` where known.
+ * @param {string} rootId - the Session whose descendants are wanted.
+ * @param {string[]} warnings - collector for recoverable failures.
+ * @returns {Promise<Array<{ id: string, depth: number, parentId: string }>>} the rows.
  */
-async function attachTitles(ctx, entries) {
-  if (entries.length === 0) return entries
+async function walkSubagentCatalog(ctx, rootId, warnings) {
   const query = ctx.get('sessionQuery')
-  if (query === undefined || typeof query.readTitleSnapshots !== 'function') return entries
-  try {
-    const results = await query.readTitleSnapshots(entries.map((entry) => entry.id))
-    if (!Array.isArray(results)) return entries
-    const titles = new Map()
-    for (const result of results) {
-      if (result?.status !== 'fulfilled') continue
-      const id = result.value?.session?.id
-      const title = result.value?.title
-      if (typeof id === 'string' && typeof title === 'string' && title.trim() !== '') titles.set(id, title)
-    }
-    for (const entry of entries) {
-      const title = titles.get(entry.id)
-      if (title !== undefined) entry.title = title
-    }
-  } catch {
-    // Titles are optional: the dialog falls back to the id.
-  }
-  return entries
-}
-
-/**
- * Walk one lineage level at a time and label each child by its header `origin`.
- *
- * Breadth-first with a visited set and a depth cap: a hand-edited header could
- * name a cycle, and DSH's own lineage walk has no guard against one.
- * @param {object[]} records - the observed Session corpus.
- * @param {string} rootId - the Session the walk starts from (never a descendant).
- * @param {(id: string, depth: number, kind: string) => void} add - collector.
- */
-function walkLineage(records, rootId, add) {
-  const childrenByParent = new Map()
-  for (const record of records) {
-    const header = record?.header
-    const parent = typeof header?.parentSession === 'string' ? header.parentSession : undefined
-    if (parent === undefined || typeof header?.id !== 'string') continue
-    const children = childrenByParent.get(parent) ?? []
-    children.push(header)
-    childrenByParent.set(parent, children)
+  if (query === undefined || typeof query.observeSession !== 'function') {
+    warnings.push('sessionQuery 服务不可用，子智能体目录没有读到')
+    return []
   }
 
-  const seen = new Set([rootId])
-  let frontier = [rootId]
-  for (let depth = 1; frontier.length > 0 && depth <= MAX_LINEAGE_DEPTH; depth += 1) {
+  const rows = []
+  const visited = new Set([rootId])
+  let frontier = [{ id: rootId, depth: 0 }]
+  while (frontier.length > 0) {
     const next = []
-    for (const parentId of frontier) {
-      for (const header of childrenByParent.get(parentId) ?? []) {
-        if (seen.has(header.id)) continue
-        seen.add(header.id)
-        add(
-          header.id,
-          depth,
-          header.origin === 'subagent' ? DESCENDANT_KINDS.subagent : DESCENDANT_KINDS.derived,
-          parentId,
-        )
-        next.push(header.id)
+    for (const parent of frontier) {
+      let observation
+      try {
+        observation = await query.observeSession(parent.id)
+      } catch (error) {
+        warnings.push(`读取会话 ${parent.id} 的子智能体目录失败：${messageOf(error)}`)
+        continue
+      }
+      let entries
+      try {
+        entries = observation?.projections?.values?.subagentCatalog
+      } finally {
+        // A lease pins its cached preparation until it is disposed, and the only
+        // disposer is `Symbol.dispose` — the observation carries no `release()`.
+        // Calling it in a `finally` keeps the walk from pinning every parent it
+        // read; without the symbol (an older backend) there is nothing to free.
+        const release = observation?.[Symbol.dispose]
+        if (typeof release === 'function') {
+          try {
+            release.call(observation)
+          } catch {
+            // A lease that refuses to free is the Host's business, not ours.
+          }
+        }
+      }
+      if (!Array.isArray(entries)) {
+        warnings.push(`会话 ${parent.id} 的子智能体目录没有读到`)
+        continue
+      }
+      for (const entry of entries) {
+        const id = typeof entry?.id === 'string' ? entry.id : ''
+        if (!SESSION_ID.test(id) || visited.has(id)) continue
+        visited.add(id)
+        const depth = parent.depth + 1
+        if (depth > MAX_LINEAGE_DEPTH) continue
+        rows.push({ id, depth, parentId: parent.id })
+        next.push({ id, depth })
       }
     }
     frontier = next
   }
+  return rows
+}
+
+/**
+ * The final non-empty segment of a directory path, POSIX or Windows.
+ *
+ * The same reading the shipped client's `workspaceTitleOf` uses, kept in step
+ * with it so a Session's display name here matches the sidebar's.
+ * @param {string|undefined} path - the directory path.
+ * @returns {string} the final segment, or an empty string.
+ */
+function workspaceTitleOf(path) {
+  if (typeof path !== 'string') return ''
+  const trimmed = path.replace(/[/\\]+$/, '')
+  const separator = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return trimmed.slice(separator + 1)
+}
+
+/**
+ * Fill in each entry's title, so the dialogs list names instead of ids.
+ *
+ * Two sources, in the order the sidebar itself uses: the durable title the
+ * Session log carries, then the final segment of its project directory, then the
+ * raw id. The folded snapshot is `{ session, title: { title, … } }`, and the
+ * query service reports a Session with no title event as fulfilled with no
+ * `title`, so a Session that was never renamed still reads as its directory
+ * rather than as "untitled".
+ * @param {object} ctx - Host Cordis context.
+ * @param {Array<object>} entries - the gathered entries, each with `id` and
+ *   optionally `cwd`.
+ * @returns {Promise<Array<object>>} the same entries, with `title` where known.
+ */
+async function attachTitles(ctx, entries) {
+  if (entries.length === 0) return entries
+  const titled = new Map()
+  const query = ctx.get('sessionQuery')
+  if (query !== undefined && typeof query.readTitleSnapshots === 'function') {
+    try {
+      const results = await query.readTitleSnapshots(entries.map((entry) => entry.id))
+      if (Array.isArray(results)) {
+        for (const result of results) {
+          if (result?.status !== 'fulfilled') continue
+          const id = result.value?.session?.id
+          // The snapshot nests the folded title one level down; a Session whose
+          // log holds no title event reports fulfilled without it.
+          const title = result.value?.title?.title
+          if (typeof id === 'string' && typeof title === 'string' && title.trim() !== '') titled.set(id, title)
+        }
+      }
+    } catch {
+      // Titles are optional: the directory and the id still name the row.
+    }
+  }
+  for (const entry of entries) {
+    const title = titled.get(entry.id)
+    if (title !== undefined) {
+      entry.title = title
+      continue
+    }
+    const directory = workspaceTitleOf(entry.cwd)
+    if (directory !== '') entry.title = directory
+  }
+  return entries
 }
 
 /**
@@ -559,7 +1092,11 @@ async function inspectSession(ctx, sessionId) {
     ? undefined
     : await persistence.stat(sessionId)
   const header = snapshot?.header
-  const descendants = await gatherDescendants(ctx, sessionId, [])
+  // Why a branch may be missing is carried back to the dialog: the family is read
+  // from two sources, and one of them failing silently is indistinguishable from a
+  // Session that genuinely has no children.
+  const warnings = []
+  const descendants = await gatherDescendants(ctx, sessionId, warnings)
   const listed = descendants.slice(0, MAX_LISTED_DESCENDANTS)
   // Only the Sessions the dialog can show are asked about their work: each answer
   // costs one admission walk, and beyond the listing nothing can be selected.
@@ -572,6 +1109,7 @@ async function inspectSession(ctx, sessionId) {
     artifactDirectory: header === undefined ? undefined : locateDirectory(persistence, header),
     ...runtimeOf(ctx, sessionId),
     activity: busy.get(sessionId) ?? [],
+    warnings,
     descendants: {
       count: descendants.length,
       subagents,
@@ -674,6 +1212,24 @@ async function sessionActivity(ctx, sessionId) {
   if (typeof ctx.waterfall !== 'function') return []
   const value = await ctx.waterfall('workspace/session-activity', { sessionId }, () => Promise.resolve([]))
   return Array.isArray(value) ? value : []
+}
+
+/**
+ * The activity of one Session as the bulk dialog shows it.
+ *
+ * The bulk list asks about every Session at once, and each answer costs one
+ * admission walk, so a Session the Host holds neither open nor in an Agent is
+ * reported idle without asking: such a Session cannot have work to stop, and a
+ * long list stays one pass over the corpus.
+ * @param {object} ctx - Host Cordis context.
+ * @param {string} sessionId - the Session to ask about.
+ * @param {{ open: boolean, agent: boolean, running: boolean }} runtime - its runtime facts.
+ * @returns {Promise<object[]|null>} the described families, or null when idle.
+ */
+async function catalogActivity(ctx, sessionId, runtime) {
+  if (runtime.open !== true && runtime.agent !== true && runtime.running !== true) return null
+  const described = describeActivity(await sessionActivity(ctx, sessionId))
+  return described.length === 0 ? null : described
 }
 
 /**

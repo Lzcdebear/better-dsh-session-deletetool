@@ -45,17 +45,56 @@ For the chosen session, the Host half:
 
 ### Choosing what goes with it
 
-The dialog lists the session's whole family rather than assuming all of it:
+The dialog draws the session's whole family as **one tree**:
 
-- one **delete all** checkbox, with an indeterminate state when the selection is partial;
-- one collapsible group per relation — *subagent conversations* and *forked conversations*;
-- one checkbox per descendant, indented by lineage depth, labelled with its title and the tail of its
-  id, and badged when it is open or has unfinished work.
+- row 1 is this conversation, carrying the whole family's checkbox and named as the sidebar names it;
+- row 2 is one collapsible **Subagents (n)** branch holding the subagents this conversation spawned;
+- row 3 is one collapsible **Forked conversations (n)** branch, and each fork inside it keeps *its own*
+  Subagents branch — so a fork of a fork is drawn inside its parent's block, one step further in,
+  instead of being listed beside it. A subagent that spawned a conversation keeps that conversation
+  inside the subagent's own block for the same reason;
+- every row has a checkbox, its name and the tail of its id, and is badged when it is open or has
+  unfinished work. Names follow the sidebar's own rule — the durable title, else the final segment of
+  the project directory, else the id — so nothing reads as *untitled*;
+- the nesting is the **indentation** alone, one step per level: a parent is followed immediately by the
+  children it draws, so a level-3 row reads as hanging off the level-2 row above it rather than merely
+  as "somewhere deeper".
+
+A row's checkbox covers **its own subtree**: ticked when everything below it is ticked, mixed when only
+part of it is, and pressing it takes or clears that whole subtree. A block's checkbox covers the rows
+the block lists. The delete set is one set of ids, with no second "excluded rows" state beside it, so
+the picture and the footer's count cannot drift apart.
+
+Leads that could not be read are reported above the list (a branch whose directory would not open, for
+example) instead of quietly costing rows: a missing row and a conversation that genuinely has no
+children used to look exactly alike.
 
 Confirming posts exactly the ticked ids and the button states how many conversations will go.
 Unticked descendants survive as conversation roots. The selection is validated against the Host's own
 walk, so a request can only ever name Sessions in that lineage. A fork is a conversation in its own
 right, which is exactly why it is listed with a checkbox instead of being taken silently.
+
+### Deleting in bulk
+
+A trash control sits in the workspace section header, immediately **left of the search icon** (it
+draws the `deleting icon.svg` glyph). It opens one dialog over every conversation the Host knows:
+
+- **Sectioned by Workspace**, in the registry's own order, each headed by the Workspace title and its
+  conversation count; conversations no Workspace owns land in a final **Ungrouped** section.
+- **Each conversation is drawn as the same tree the single-session dialog draws**: under a row come its
+  collapsible **Subagents (n)** and **Forked conversations (n)** blocks, and a derived conversation
+  carries its own level inside its own block, so the hierarchy is the indentation alone.
+- **Names follow the sidebar's own rule**: the durable title when the log carries one, else the final
+  segment of the project directory (for example `Project_lzc`), else the id. A conversation that was
+  never renamed therefore reads as its directory rather than as *untitled*.
+- **Selection follows the subtree, and a child can be deleted on its own.** Ticking a parent takes the
+  ticked rows below it; ticking one subagent without its parent sends that subagent as a delete root of
+  its own and leaves the parent alone. The footer button always states how many conversations the press
+  will delete.
+
+The dialog carries the same **stop unfinished work first** switch as the single-session one, on by
+default. Confirming runs the delete above once per ticked root; a root that fails is listed and the
+rest still go.
 
 ### What blocks a delete, and what does not
 
@@ -155,40 +194,55 @@ package name).
 1. Open the `⋯` menu on any session row and pick **Delete conversation**.
 2. The dialog asks the Host for the session's real state and states it: what will be deleted,
    whether the Harness still holds it open, and what is still running.
-3. It then lists the family for you to choose from: a **delete all** checkbox, one collapsible group
-   per relation (subagent conversations, forked conversations), and one checkbox per descendant with
-   its title, id tail and state badge. Untick whatever you want to keep.
+3. It then draws the whole family as a tree to choose from: this conversation on its own row, then its
+   **Subagents (n)** and **Forked conversations (n)** blocks, each derived conversation carrying its own
+   level inside its block, and a checkbox on every row (title, id tail, state badge). Untick whatever
+   you want to keep.
 4. Confirm. The button states how many conversations will go; if work is running it reads
    **Stop and delete** and stops that work first.
 5. The rows leave the sidebar at once, and the data is gone from disk.
 
+For bulk: press the trash control in the workspace section header, **left of the search icon**, tick
+conversations in the Workspace-sectioned list (ticking a parent brings its children, a child can be
+ticked or unticked on its own), then confirm.
+
 ## HTTP surface
 
-The Client half reaches the Host over two same-origin `exact` routes on `ctx.webServer`. A
+The Client half reaches the Host over four same-origin `exact` routes on `ctx.webServer`. A
 build-free plain-JavaScript bundle cannot declare a typed `ctx.remote` namespace (that needs
 generated Typert descriptors), so this uses the same transport the community plugin `dshmarket`
 uses.
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/dsh-session-delete/inspect?sessionId=…` | GET | `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory`, and `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }` where each item carries `id`, `kind`, `depth`, `parentId`, `title`, `open`, `agent`, `running` and its own `activity` |
+| `/dsh-session-delete/inspect?sessionId=…` | GET | `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `warnings` (the leads that could not be read, so a missing branch is never mistaken for a childless one), and `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }` where each item carries `id`, `kind`, `depth`, `parentId`, `title`, `open`, `agent`, `running` and its own `activity` |
 | `/dsh-session-delete/delete` | POST | body `{ sessionId, stop?, descendants? }` — `descendants` omitted means the whole family, an empty array means the session alone; returns `removed`, `descendants` (each with its `kind`), `kept`, `stoppedActivity`, `terminalsKilled`, `warnings`, `runtime`, `activity`. A name outside the family is refused with `400 unknown-descendant` before anything is removed |
+| `/dsh-session-delete/catalog` | GET | `{ ok, workspaces: [{ key, workspaceId, title, path, sessions[] }], totals }`; each session row carries `id`, `kind` (`root` / `subagent` / `derived`), `depth`, `parentId`, `hasChildren`, `family`, `subagents`, `derived`, `title`, `cwd`, `open`, `agent`, `running`, `activity`. Section order is the registry's own Workspace order, and the section whose `workspaceId` is `null` is Ungrouped |
+| `/dsh-session-delete/delete-batch` | POST | body `{ roots: [{ sessionId, descendants? }], stop? }`, each root running the single-session delete once; returns `{ ok, roots, removed[], failed[] }`. A failing root is reported as one `failed` entry and the rest are still attempted. At most 200 roots per request |
 
-Both routes carry their own same-origin gate: `Host` must be loopback, `sec-fetch-site` must not be
-`cross-site`, and a present `Origin` must match `Host`. Another site's page cannot reach them.
+All four routes carry their own same-origin gate: `Host` must be loopback, `sec-fetch-site` must not
+be `cross-site`, and a present `Origin` must match `Host`. Another site's page cannot reach them.
 
 ## Layout
 
 | File | Role |
 |---|---|
-| `host.js` | Host half: the two routes, artifact/accounting/cache removal, subagent subtree |
-| `client.js` | Client half: the `sidebar.workspaces.session.menu.item` row (order 500) and the `shell.overlay` confirmation dialog |
+| `host.js` | Host half: the four routes, artifact/accounting/cache removal, the subagent subtree, and the Workspace-sectioned catalog |
+| `client.js` | Client half: the `sidebar.workspaces.session.menu.item` row (order 500), the bulk control, and the two `shell.overlay` dialogs |
 | `cordis.patch.yml` | Inserts the Host row into the profile's layer stack |
 | `test/host.test.mjs` | Route tests over real temporary directories |
-| `icon.svg` | Plugin artwork |
+| `icon.svg` | Plugin artwork (the bulk control draws `deleting icon.svg`) |
 
 Styles use only host theme tokens (`--dsw-alias-*`), so light and dark both read; the UI is
 localized (English / 简体中文) through the Client locale service.
+
+Why the bulk entry is not a slot registration of its own: `sidebar.workspaces` is a `single` slot, so
+a second registrant would **shadow** the shipped session browser instead of sitting beside it. The
+Client half therefore registers in `sidebar.footer.action` (rendering nothing there) and mounts its
+control into the browser's own search cell through a portal and one `MutationObserver`, which
+re-creates the control when React re-renders that header. That insertion carries no authority beyond
+opening the dialog; the two Host routes do the work. If a future harness renames that cell's CSS
+class, the control stops appearing and nothing else changes.
 
 ## Development
 

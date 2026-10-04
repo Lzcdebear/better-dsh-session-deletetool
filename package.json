@@ -1,14 +1,14 @@
 {
   "name": "dsh-session-delete",
-  "version": "0.2.1",
+  "version": "0.3.9",
   "type": "module",
-  "description": "Delete a conversation from the DSH sidebar instead of only archiving it, choosing which of its subagent and forked conversations go with it. / 在会话菜单里真正删除对话，并可勾选连带删除哪些子智能体会话与派生对话。",
+  "description": "Delete a conversation from the DSH sidebar instead of only archiving it, choosing which of its subagent and forked conversations go with it — and delete many at once from the trash icon beside the workspace search. / 在会话菜单里真正删除对话，并可勾选连带删除哪些子智能体会话与派生对话；工作区搜索图标左侧另有批量删除入口。",
   "license": "MIT",
   "author": "Lzcdebear",
   "icon": "./icon.svg",
   "meta": {
     "title": "会话删除 / Session Delete",
-    "description": "会话「⋯」菜单里多一项「删除会话」：先列出它的子智能体会话与派生对话，可折叠、可逐项勾选，确认后删掉日志、工程记录与投影缓存，不只是归档隐藏。"
+    "description": "会话「⋯」菜单里多一项「删除会话」：先列出它的子智能体会话与派生对话，可折叠、可逐项勾选，确认后删掉日志、工程记录与投影缓存，不只是归档隐藏。工作区搜索图标左侧另有批量删除入口，按工作区分区列出全部会话，勾母会话连带子会话，也可以单独勾选子会话。"
   },
   "keywords": [
     "deepseek-harness",
@@ -40,6 +40,7 @@
       "platform": "web",
       "immediately": true,
       "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
         "@deepseek-ai/dsh-client-ui-workspace",
         "@deepseek-ai/dsh-client-locale"
       ]

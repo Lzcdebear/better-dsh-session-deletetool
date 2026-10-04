@@ -27,13 +27,31 @@ DSH 只能**归档**会话：归档把那一行从侧边栏隐藏，工件一样
 
 ### 选择删什么
 
-确认框会把整个家族列出来让你挑，而不是默认全带走：
+确认框会把整个家族画成**一棵树**让你挑，而不是默认全带走：
 
-- 一个**删除全部**勾选框，部分选中时显示半选状态；
-- 每种关系一个**可折叠分组**：子智能体会话、派生对话（fork）；
-- 每个子会话一个勾选框，按血缘深度缩进，标出标题和 id 尾号，还开着的或还有工作没跑完的会带状态标记。
+- 第 1 行是**本对话**，它的勾选框管整个家族，名字跟侧边栏显示的一致；
+- 第 2 行是一个**可折叠的「子智能体（n）」分支**，装本对话自己生的子智能体；
+- 第 3 行是一个**可折叠的「派生对话（n）」分支**，分支里每个派生对话自带它自己的「子智能体（n）」子分支，所以**派生对话的派生对话画在父辈块里面**（缩进多一格），而不是跟它并排；
+- 子智能体自己派生出来的对话，同理画在那个子智能体的块里面；
+- 每行都有勾选框，标出名字和 id 尾号，还开着的或还有工作没跑完的会带状态标记；名字跟侧边栏同一套规则：日志里有名字用名字，没有就用它项目目录的末段，再没有才用 id，所以不会显示成"未命名"；
+- 层级只靠**缩进**表达：一级缩进一格、二级两格，父行后面紧跟它自己画出来的子行，所以第 3 层那行一眼能看出是挂在上面第 2 层那行下面，而不是"反正更深一点"。
+
+每行的勾选框管**它自己那棵子树**：下面全都勾上时它是勾上的，只勾了一部分时显示成半选，按一下整棵子树一起勾或一起取消；分组标题的勾选框管这个分组列出的所有行。删除集合只存这一份 id，不再有"选中的根 + 排除的子行"两套状态，所以底部的计数不会和画面对不上。
+
+读不到的血缘会写在列表上方（比如某个分支的目录打不开），而不是静默少几行——少行和"这个会话确实没有子会话"原来长得一样。
 
 确认时只提交勾上的 id，按钮上写着即将删掉几个会话。没勾的子会话会作为独立的会话根留下来。选择会在宿主侧拿它自己走出来的血缘做校验，请求只能点到这个家族里的会话。fork 出来的对话本身也是独立会话，所以它是"带勾选框列出来"，而不是被静默带走。
+
+### 批量删除
+
+工作区标题行、搜索图标**左边**多了一个垃圾桶图标（画的是 `deleting icon.svg` 那个图），点开是一个总览所有会话的弹窗：
+
+- **按工作区分区。** 分区顺序跟注册表里工作区的顺序一致，标题是工作区名，右边写这个区里有几个会话；没有被任何工作区认领的会话归到最后一个**未归类**区。
+- **每个会话画成和单会话确认框同一棵树**：会话行下面是它自己的「子智能体（n）」和「派生对话（n）」两个可折叠分组，派生对话再把自己那一层接在它自己的块里面，层级只靠缩进表达。
+- **会话名跟侧边栏一致**：日志里有名字就用名字，没有就用它项目目录的末段（比如 `Project_lzc`），再没有才用 id。没改过名的会话因此显示成目录名，而不是"未命名"。
+- **勾选按子树走，子会话可以单独删。** 勾上母会话，它下面勾中的子会话和派生对话跟着一起删；只勾某个子智能体、不勾它的母会话时，那个子智能体自己作为一个删除根提交，母会话保持不动。底部按钮始终写着这次会删掉几个会话。
+
+弹窗里同样有「停止并删除」那个开关，默认打开，和单会话确认框一致。确认后每个被勾的会话根各自走一次上面那条删除流程；某个根失败只在弹窗里列出来，其余照删。
 
 ### 什么会拦，什么不会
 
@@ -103,32 +121,38 @@ https://github.com/Lzcdebear/dsh-delete-session/archive/refs/heads/main.tar.gz
 
 1. 在任意会话行上点 `⋯`，选**删除会话**。
 2. 确认框先向宿主问一次真实状态，写清楚：会删掉什么、它是不是还被 Harness 占用、还剩什么在工作。
-3. 接着把整个家族列出来让你挑：一个**删除全部**勾选框、每种关系一个可折叠分组（子智能体会话 / 派生对话）、每个子会话一个勾选框（带标题、id 尾号和状态标记）。不想删的把勾去掉。
+3. 接着把整个家族画成一棵树让你挑：本对话一行，下面按「子智能体（n）」「派生对话（n）」两个可折叠分组展开，派生对话把自己那一层接在自己的块里面；每行都有勾选框（带标题、id 尾号和状态标记），分组标题的勾选框管这一块。不想删的把勾去掉。
 4. 确认。按钮上写着即将删掉几个会话；如果还有在跑的工作，按钮会变成**停止并删除**，按下去先停掉那些工作。
 5. 相关的行立刻从侧边栏消失，数据也从磁盘上没了。
 
+批量的走法：点工作区标题行里、搜索图标**左边**那个垃圾桶图标，在按工作区分好区的列表里勾会话（勾母会话连带子会话，子会话可以单独勾），然后确认。
+
 ## HTTP 接口
 
-客户端半通过 `ctx.webServer` 上两条同源 `exact` 路由访问宿主。纯 JS、无构建步骤的插件没法声明带类型的 `ctx.remote` 命名空间（那需要 Typert 生成产物），所以这里用的是社区插件 `dshmarket` 同款通道。
+客户端半通过 `ctx.webServer` 上四条同源 `exact` 路由访问宿主。纯 JS、无构建步骤的插件没法声明带类型的 `ctx.remote` 命名空间（那需要 Typert 生成产物），所以这里用的是社区插件 `dshmarket` 同款通道。
 
 | 路由 | 方法 | 作用 |
 |---|---|---|
-| `/dsh-session-delete/inspect?sessionId=…` | GET | 返回 `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory`，以及 `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }`，其中每项带 `id`、`kind`、`depth`、`parentId`、`title`、`open`、`agent`、`running` 和它自己的 `activity` |
+| `/dsh-session-delete/inspect?sessionId=…` | GET | 返回 `stored` / `open` / `agent` / `running` / `activity` / `artifactDirectory` / `warnings`（没读到的血缘线索，避免"少几行"被当成"这个会话没有子会话"），以及 `descendants` = `{ count, subagents, derived, truncated, maxDeletable, items[] }`，其中每项带 `id`、`kind`、`depth`、`parentId`、`title`、`open`、`agent`、`running` 和它自己的 `activity` |
 | `/dsh-session-delete/delete` | POST | body `{ sessionId, stop?, descendants? }`——`descendants` 不传表示整个家族，传空数组表示只删它自己；返回 `removed`、`descendants`（每条带 `kind`）、`kept`、`stoppedActivity`、`terminalsKilled`、`warnings`、`runtime`、`activity`。点到的名字不在家族里会在动手之前就以 `400 unknown-descendant` 拒绝 |
+| `/dsh-session-delete/catalog` | GET | 返回 `{ ok, workspaces: [{ key, workspaceId, title, path, sessions[] }], totals }`；每个会话行带 `id`、`kind`（`root` / `subagent` / `derived`）、`depth`、`parentId`、`hasChildren`、`family`、`subagents`、`derived`、`title`、`cwd`、`open`、`agent`、`running`、`activity`。分区顺序就是注册表里工作区的顺序，`workspaceId` 为 `null` 的那个分区是"未归类" |
+| `/dsh-session-delete/delete-batch` | POST | body `{ roots: [{ sessionId, descendants? }], stop? }`，每个根各自照单会话那条规则走一遍；返回 `{ ok, roots, removed[], failed[] }`。某个根失败只记一条 `failed`，不会中止其余。一次最多 200 个根 |
 
-两条路由各自带同源校验：`Host` 必须是环回、`sec-fetch-site` 不能是 `cross-site`、`Origin` 存在时必须与 `Host` 同源。别的网站页面打不进来。
+四条路由各自带同源校验：`Host` 必须是环回、`sec-fetch-site` 不能是 `cross-site`、`Origin` 存在时必须与 `Host` 同源。别的网站页面打不进来。
 
 ## 构成
 
 | 文件 | 作用 |
 |---|---|
-| `host.js` | 宿主半：两条路由、工件/工程记录/缓存清理、子会话子树 |
-| `client.js` | 客户端半：`sidebar.workspaces.session.menu.item` 菜单项（order 500）+ `shell.overlay` 确认框 |
+| `host.js` | 宿主半：四条路由、工件/工程记录/缓存清理、子会话子树、按工作区分区的会话总览 |
+| `client.js` | 客户端半：`sidebar.workspaces.session.menu.item` 菜单项（order 500）+ 批量图标 + 两个 `shell.overlay` 对话框 |
 | `cordis.patch.yml` | 把宿主行插进 profile 层栈 |
 | `test/host.test.mjs` | 路由测试，跑在真实临时目录上 |
-| `icon.svg` | 插件图标 |
+| `icon.svg` | 插件图标（批量按钮画的是 `deleting icon.svg` 那个图） |
 
 样式只用宿主主题 token（`--dsw-alias-*`），浅色深色都跟随；界面文案通过客户端 locale 服务本地化（英文 / 简体中文）。
+
+批量入口为什么不注册一个新插槽：`sidebar.workspaces` 是 single 槽，第二个注册者会**顶掉**官方那套会话浏览器，而不是并排。所以客户端半注册在 `sidebar.footer.action`（本身不渲染任何东西），再把自己的按钮用 portal 挂进浏览器自己的搜索格子里，并用一个 `MutationObserver` 在 React 重渲染表头时补回来。这一步除了"打开弹窗"没有任何权限，真正干活的是宿主那两条路由。哪天 harness 改掉了这个格子的 CSS 类名，按钮会不出现，别的地方不受影响。
 
 ## 开发
 
