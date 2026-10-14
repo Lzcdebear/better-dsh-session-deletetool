@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.3
+
+**Both delete glyphs now match the row they sit in, and stay crisp on scaled screens.** The bulk
+control's rest colour is inherited from the workspace section header instead of being set from a
+token, so the trash and the “工作区” label always resolve to the same computed colour and no theme
+can tint one of them apart from the other; hover only adds the shared hover background, the way
+the shipped icon buttons behave. The menu row's trash gained a centre bar, a wider lower half and
+two pixels of size (14px → 17px), and both glyphs were redrawn as single stroked contours instead
+of closed filled bands — a filled hairline band renders as two anti-aliased edges apiece and goes
+soft on fractional-DPI (4K-scaled) screens, which also reads as washed-out colour; both now carry
+`shape-rendering: geometricPrecision`. The bulk glyph is 18px, one step above the shipped icon
+set's 16px. Nothing else changed: the dialogs, the routes and the tests are as 0.5.2 left them.
+
 ## 0.5.2
 
 **The bulk entry now survives themed search styles.** The entry used to ride *inside* the

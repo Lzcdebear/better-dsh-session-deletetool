@@ -328,13 +328,23 @@ window.__ModuleLoader__.load({
       })
     }
 
-    /** One 14px trash glyph, drawn in the menu icon's colour. */
+    /** One 17px trash glyph with a centre bar, drawn in the menu icon's colour. */
     function trashIcon() {
       return h(
         'svg',
-        { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', 'aria-hidden': true },
+        {
+          viewBox: '0 0 16 16',
+          width: 17,
+          height: 17,
+          fill: 'none',
+          shapeRendering: 'geometricPrecision',
+          'aria-hidden': true,
+        },
         h('path', {
-          d: 'M3 4.5h10M6.5 4.5V3.25A.75.75 0 0 1 7.25 2.5h1.5a.75.75 0 0 1 .75.75V4.5M4.5 4.5l.6 8.1a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.6-8.1',
+          // The can keeps a shallow taper (`l0.25 8.1` per wall) so the lower
+          // half stays wide at this size, and one centre bar gives the small
+          // glyph something to read as a bin rather than an empty box.
+          d: 'M3 4.5h10M6.5 4.5V3.25A.75.75 0 0 1 7.25 2.5h1.5a.75.75 0 0 1 .75.75V4.5M4.5 4.5l0.25 8.1a0.85 0.85 0 0 0 0.85 0.8h4.8a0.85 0.85 0 0 0 0.85-0.8L11.5 4.5M8 7.75v3.9',
           stroke: 'currentColor',
           strokeWidth: 1.2,
           strokeLinecap: 'round',
@@ -344,23 +354,34 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The bulk-delete drawing, in the source SVG's own coordinates.
+     * The bulk-delete drawing: five stroked paths on a 32-unit box.
      *
-     * The paths are identity transforms, so mapping the viewBox onto the icon box
-     * needs no geometry change. The drawing is authored as a filled glyph, but
-     * the shipped product icon set is outline-only — `fill: none`,
-     * `stroke: currentColor`, `strokeWidth: 1` on a 16px box — so it is stroked
-     * here to match the search and view-option icons it sits beside. At a 16px
-     * box the 32-unit viewBox halves every coordinate, so the shipped 1px stroke
-     * is `2` in these units.
+     * The walls are stroked, not filled. The earlier drawing outlined every
+     * wall as a closed filled shape, so each wall rendered as a hairline band
+     * with two anti-aliased edges and went soft — and looked washed out — on
+     * fractional-DPI (4K-scaled) screens; one stroked contour per wall keeps
+     * the glyph crisp. The stroke width, caps and joins come from the svg
+     * element, and `strokeWidth: 2` on the 32-unit box is the shipped icon
+     * set's 1px at 16px, and just over that at the 18px this control draws.
+     *
+     * The can keeps its taper shallow on purpose (`l0.4 15.7` per wall): a
+     * steeper one leaves the lower half too narrow to read beside the host's
+     * own straight-sided icons.
      */
     const BULK_ICON_SHAPES = [
-      'M20,29H12a5,5,0,0,1-5-5V12a1,1,0,0,1,2,0V24a3,3,0,0,0,3,3h8a3,3,0,0,0,3-3V12a1,1,0,0,1,2,0V24A5,5,0,0,1,20,29Z',
-      'M26,9H6A1,1,0,0,1,6,7H26a1,1,0,0,1,0,2Z',
-      'M20,9H12a1,1,0,0,1-1-1V6a3,3,0,0,1,3-3h4a3,3,0,0,1,3,3V8A1,1,0,0,1,20,9ZM13,7h6V6a1,1,0,0,0-1-1H14a1,1,0,0,0-1,1Z',
-      'M14,23a1,1,0,0,1-1-1V15a1,1,0,0,1,2,0v7A1,1,0,0,1,14,23Z',
-      'M18,23a1,1,0,0,1-1-1V15a1,1,0,0,1,2,0v7A1,1,0,0,1,18,23Z',
+      'M6 9.5h20',
+      'M13 9.5V7.6A1.6 1.6 0 0 1 14.6 6h2.8A1.6 1.6 0 0 1 19 7.6v1.9',
+      'M9.25 9.5l0.4 15.7a1.8 1.8 0 0 0 1.8 1.75h9.1a1.8 1.8 0 0 0 1.8-1.75L22.75 9.5',
+      'M14 14.5v7.5',
+      'M18 14.5v7.5',
     ]
+
+    /**
+     * The rendered box of the bulk glyph, in CSS pixels. One step above the
+     * shipped 16px icon set: the trash drawing reads small beside the host's
+     * own icons, and the extra pixels also give the 1px stroke more to sit on.
+     */
+    const BULK_ICON_SIZE = 18
 
     /**
      * The bulk-delete glyph, drawn in the icon set's own outline convention.
@@ -379,6 +400,7 @@ window.__ModuleLoader__.load({
           strokeWidth: 2,
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
+          shapeRendering: 'geometricPrecision',
           xmlns: 'http://www.w3.org/2000/svg',
           'aria-hidden': 'true',
           focusable: 'false',
@@ -402,6 +424,7 @@ window.__ModuleLoader__.load({
       const paths = BULK_ICON_SHAPES.map((d) => `<path d="${d}"/>`).join('')
       return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="${size}" height="${size}"`
         + ' fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
+        + ' shape-rendering="geometricPrecision"'
         + ` aria-hidden="true" focusable="false" style="display:block">${paths}</svg>`
     }
 
@@ -430,7 +453,7 @@ window.__ModuleLoader__.load({
         // The button is a plain DOM node, so the glyph goes in as markup; it is
         // written from the same path set the React side draws, and carries no
         // user text, so this is not a sink for anything but our own constant.
-        node.innerHTML = bulkIconMarkup(16)
+        node.innerHTML = bulkIconMarkup(BULK_ICON_SIZE)
         const onClick = (event) => {
           event.preventDefault()
           event.stopPropagation()
@@ -1381,11 +1404,12 @@ window.__ModuleLoader__.load({
    that pushes the icon cluster to the row's right edge lives on this control —
    the slot it precedes is the row's flex filler (flex:1, margin-left:auto), and
    a filler sitting between the label and this control is what once drove the
-   two apart. The base colour is the label-tertiary token — the one themed
-   builds give the icons this control sits beside — so the row reads as one
-   shade of grey. */
-.dsd-anchor{box-sizing:border-box;flex:none;margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary,#8b909a);cursor:pointer}
-.dsd-anchor:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary,#e6e6e6)}
+   two apart. The colour is inherited from the workspace section header itself —
+   the same computed colour the “工作区” label text carries — so no theme can
+   tint the icon and the label differently, and hover only adds the shared hover
+   background the way the shipped icon buttons behave. */
+.dsd-anchor{box-sizing:border-box;flex:none;margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:inherit;cursor:pointer}
+.dsd-anchor:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
 .dsd-anchor:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4a8cff));outline-offset:-2px}
 /* Parked ahead of the slot, the control takes over the slot's pushing duty: the
    slot falls back to its shipped 28px cell, so the header row reads as one
