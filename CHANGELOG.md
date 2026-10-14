@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.2
+
+**The bulk entry now survives themed search styles.** The entry used to ride *inside* the
+workspace search slot, and dsh-claude-style (Nwflower's Claude Code Desktop theme) visually
+hides that slot in two of its three 搜索框样式 (search styles), so the trash icon only appeared
+when the style was set to 图标. The control now mounts as the slot's **previous sibling** in
+the header row and stays put in all three styles: where the theme hides the shipped search
+icon, the control remains on its own. It also takes over the slot's `margin-left:auto` — the
+slot is the row's flex filler (`flex:1`) and, left in place, it pushed the control to the far
+edge of the header — and pins the collapsed slot back to its shipped 28px cell
+(`flex:0 0 auto`, expanded search exempted), so the row reads as one evenly spaced icon
+cluster at the row's own 4px gaps. The icon's rest colour moved to `--dsw-alias-label-tertiary`,
+the token themed builds give the icons it sits beside. Nothing else changed: the dialogs, the
+routes and the tests are as 0.4.1 left them.
+
 ## 0.4.1
 
 **The package is on npm, and the READMEs say how to install it.** `better-dsh-session-deletetool@0.4.0`

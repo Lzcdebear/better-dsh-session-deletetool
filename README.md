@@ -81,7 +81,11 @@ right, which is exactly why it is listed with a checkbox instead of being taken 
 ### Deleting in bulk
 
 A trash control sits in the workspace section header, immediately **left of the search icon** (it
-draws the `deleting icon.svg` glyph). It opens one dialog over every conversation the Host knows:
+draws the `deleting icon.svg` glyph). It aligns itself with the icons around it — the header row's
+own 4px gaps, the same `label-tertiary` grey at rest — and it does not live inside the search slot,
+so it stays put under all three search styles of the dsh-claude-style theme (Nwflower): where that
+theme hides the shipped search icon, the control remains on its own. It opens one dialog over every
+conversation the Host knows:
 
 - **Sectioned by Workspace**, in the registry's own order, each headed by the Workspace title and its
   conversation count; conversations no Workspace owns land in a final **Ungrouped** section.
@@ -260,10 +264,13 @@ localized (English / 简体中文) through the Client locale service.
 Why the bulk entry is not a slot registration of its own: `sidebar.workspaces` is a `single` slot, so
 a second registrant would **shadow** the shipped session browser instead of sitting beside it. The
 Client half therefore registers in `sidebar.footer.action` (rendering nothing there) and mounts its
-control into the browser's own search cell through a portal and one `MutationObserver`, which
-re-creates the control when React re-renders that header. That insertion carries no authority beyond
-opening the dialog; the two Host routes do the work. If a future harness renames that cell's CSS
-class, the control stops appearing and nothing else changes.
+control as the browser's own search slot's **previous sibling** — never inside the slot — taking over
+the `margin-left:auto` that pushes the cluster to the row's right edge and pinning the collapsed slot
+back to its 28px cell (the expanded search is exempt), then re-creating the control through one
+`MutationObserver` when React re-renders that header. Whatever a theme does to the slot itself leaves
+the control standing: dsh-claude-style visually hides the slot in two of its three search styles. That
+insertion carries no authority beyond opening the dialog; the two Host routes do the work. If a future
+harness renames that slot's CSS class, the control stops appearing and nothing else changes.
 
 ## Development
 

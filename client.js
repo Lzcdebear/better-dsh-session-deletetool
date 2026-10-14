@@ -411,7 +411,10 @@ window.__ModuleLoader__.load({
      * The browsing region is a `single` slot, so a second registrant would shadow
      * the shipped WorkspaceBrowser rather than sit beside it. This entry therefore
      * registers in the sidebar footer, renders only a hidden placeholder, and
-     * mounts one element into the region's own search slot. The insertion is
+     * mounts one element just ahead of the region's own search slot — a sibling
+     * of the slot, never a child of it, so a themed build that visually hides
+     * the slot (dsh-claude-style collapses it in its non-icon search styles)
+     * hides the slot alone and leaves this control standing. The insertion is
      * additive and reversible: a mutation observer re-creates the element when
      * React re-renders the header, and the element and the observer both go away
      * with this registration.
@@ -436,17 +439,19 @@ window.__ModuleLoader__.load({
         node.addEventListener('click', onClick)
 
         /**
-         * Put the button where the search control's own flex row starts.
-         *
-         * The class names are the shipped build's CSS-module output and the
-         * `aria-label` is its localized search label, so each lookup carries a
-         * second signal; with neither present the button stays unmounted instead
-         * of landing somewhere arbitrary.
+         * Put the button immediately ahead of the search slot, as its previous
+         * sibling in the header row — not inside the slot, which a themed build
+         * may hide wholesale. The class names are the shipped build's CSS-module
+         * output and the `aria-label` is its localized search label, so each
+         * lookup carries a second signal; with neither present the button stays
+         * unmounted instead of landing somewhere arbitrary.
          */
         const mount = () => {
           const slot = document.querySelector('[class*="_searchSlot"]')
-          if (slot !== null) {
-            if (node.parentElement !== slot) slot.insertBefore(node, slot.firstChild)
+          if (slot !== null && slot.parentElement !== null) {
+            if (node.parentElement !== slot.parentElement || node.nextElementSibling !== slot) {
+              slot.parentElement.insertBefore(node, slot)
+            }
             return true
           }
           if (!node.isConnected) {
@@ -1370,16 +1375,23 @@ window.__ModuleLoader__.load({
 .dsd-outline{border:.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.32))}
 .dsd-outline:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
 .dsd-dangerText{color:var(--dsw-alias-state-error-primary,#e5484d)}
-/* The bulk entry point, mounted into the workspace header's own search slot: a
-   28px control in the search icon's cell, ahead of that icon. */
-.dsd-anchor{box-sizing:border-box;flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-secondary,#a8adb7);cursor:pointer}
+/* The bulk entry point, mounted beside the workspace header's own search slot:
+   a 28px control sitting immediately ahead of that slot in the header row, so
+   it stays visible whatever a theme does to the slot itself. The auto margin
+   that pushes the icon cluster to the row's right edge lives on this control —
+   the slot it precedes is the row's flex filler (flex:1, margin-left:auto), and
+   a filler sitting between the label and this control is what once drove the
+   two apart. The base colour is the label-tertiary token — the one themed
+   builds give the icons this control sits beside — so the row reads as one
+   shade of grey. */
+.dsd-anchor{box-sizing:border-box;flex:none;margin-left:auto;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:var(--dsw-alias-label-tertiary,#8b909a);cursor:pointer}
 .dsd-anchor:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsd-anchor:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4a8cff));outline-offset:-2px}
-/* The shipped search cell is exactly one icon wide; the bulk control joins its
-   flex row, so the cell is widened by that one control and the icon slides
-   right. The shipped rules are CSS-module hashes, hence the attribute match and
-   the !important that keeps the two stylesheets' order irrelevant. */
-[class*="_searchSlot"]:has(> .dsd-anchor){max-width:56px !important}
+/* Parked ahead of the slot, the control takes over the slot's pushing duty: the
+   slot falls back to its shipped 28px cell, so the header row reads as one
+   evenly spaced icon cluster. While the search is expanded the slot must grow
+   again to hold the input, so the override stops at the collapsed state. */
+.dsd-anchor + [class*="_searchSlot"]:not([class*="searchSlotExpanded"]){flex:0 0 auto !important;margin-left:0 !important}
 /* The bulk dialog is wider than the single-Session one: it lists every Workspace. */
 .dsd-dialogWide{width:min(660px,100%)}
 .dsd-scroll{display:flex;flex-direction:column;gap:2px;padding:6px 0;max-height:min(58vh,520px);overflow:auto;border-block:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.2))}
@@ -1429,9 +1441,11 @@ window.__ModuleLoader__.load({
           ),
         )
         // The bulk entry lives in the sidebar foot: it renders only a hidden
-        // placeholder and mounts the real control into the browsing region's own
-        // search slot, which is what puts it beside the search icon without
-        // shadowing the shipped WorkspaceBrowser that owns that `single` slot.
+        // placeholder and mounts the real control just ahead of the browsing
+        // region's own search slot, which is what puts it beside the search
+        // icon without shadowing the shipped WorkspaceBrowser that owns that
+        // `single` slot — and keeps it visible when a themed build hides the
+        // slot itself.
         ctx.slots.inject('sidebar.footer.action', () =>
           ctx.slots.register(
             { name: 'sidebar.footer.action', id: 'better-dsh-session-deletetool-bulk', order: 40, locale: NS },

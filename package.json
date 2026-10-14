@@ -1,14 +1,14 @@
 {
   "name": "better-dsh-session-deletetool",
-  "version": "0.4.1",
+  "version": "0.5.2",
   "type": "module",
-  "description": "Delete a conversation from the DSH sidebar instead of only archiving it, and see the whole family it spawned — every subagent session and derived conversation, nested — before choosing which of them go with it; delete many at once from the trash icon beside the workspace search. / 在会话菜单里真正删除对话；确认框会把整个家族（子智能体、派生对话及其下一层）按层级画出来，删之前先看得见，并可勾选连带删除哪些；工作区搜索图标左侧另有批量删除入口。",
+  "description": "Delete a conversation from the DSH sidebar instead of only archiving it, and see the whole family it spawned — every subagent session and derived conversation, nested — before choosing which of them go with it; delete many at once from the trash icon beside the workspace search, aligned with the icons around it and visible under every dsh-claude-style search style. / 在会话菜单里真正删除对话；确认框会把整个家族（子智能体、派生对话及其下一层）按层级画出来，删之前先看得见，并可勾选连带删除哪些；工作区搜索图标左侧另有批量删除入口（兼容 dsh-claude-style 主题的搜索框样式三档，图标自动对齐相邻图标）。",
   "license": "MIT",
   "author": "Lzcdebear",
   "icon": "./icon.svg",
   "meta": {
     "title": "会话删除 / Session Delete",
-    "description": "会话「⋯」菜单里多一项「删除会话」：确认框会把整个家族按层级画成一棵树（子智能体会话、派生对话，以及派生对话自己带出的下一层，可折叠、可逐项勾选），这是 DSH 里唯一能看清这种父子关系的地方；确认后删掉日志、工程记录与投影缓存，不只是归档隐藏。工作区搜索图标左侧另有批量删除入口，按工作区分区列出全部会话，勾母会话连带子会话，也可以单独勾选子会话。"
+    "description": "会话「⋯」菜单里多一项「删除会话」：确认框会把整个家族按层级画成一棵树（子智能体会话、派生对话，以及派生对话自己带出的下一层，可折叠、可逐项勾选），这是 DSH 里唯一能看清这种父子关系的地方；确认后删掉日志、工程记录与投影缓存，不只是归档隐藏。工作区搜索图标左侧另有批量删除入口，按工作区分区列出全部会话，勾母会话连带子会话，也可以单独勾选子会话；图标与相邻图标自动对齐、同色，兼容 dsh-claude-style（Nwflower）主题的搜索框样式三档。"
   },
   "keywords": [
     "deepseek-harness",
