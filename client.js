@@ -32,6 +32,9 @@ window.__ModuleLoader__.load({
     const INSPECT_PATH = '/better-dsh-session-deletetool/inspect'
     const CATALOG_PATH = '/better-dsh-session-deletetool/catalog'
     const BATCH_PATH = '/better-dsh-session-deletetool/delete-batch'
+    const OPEN_DIRECTORY_PATH = '/better-dsh-session-deletetool/open-directory'
+    const OPEN_CACHE_PATH = '/better-dsh-session-deletetool/open-cache'
+    const REFRESH_STATS_PATH = '/better-dsh-session-deletetool/refresh-stats'
 
     const DICT = {
       zh: {
@@ -60,6 +63,30 @@ window.__ModuleLoader__.load({
         'batch.deletePartial': '{n} 个删除失败，其余已删除。',
         'batch.stoppingNote': '确认后会先停掉这些会话里未结束的工作，再删除。',
         'batch.unknown': '读不到整个会话列表，仍可直接删除。',
+        'batch.totalSessions': '会话总数',
+        'batch.search': '按名称搜索',
+        'batch.sort': '排序方式',
+        'batch.sortRecent': '按最后活跃时间',
+        'batch.sortTokens': '按 Token 消耗',
+        'batch.sortHit': '按缓存命中率',
+        'batch.filterKind': '按类型筛选',
+        'batch.filterAllKinds': '全部类型',
+        'batch.kindRoot': '主会话',
+        'batch.kindDerived': 'Fork 子会话',
+        'batch.kindSubagent': '子智能体',
+        'batch.filterWorkspace': '按工作区筛选',
+        'batch.filterAllWorkspaces': '全部工作区',
+        'batch.selectPage': '全选本页（{n}）',
+        'batch.prevPage': '上一页',
+        'batch.nextPage': '下一页',
+        'batch.pageInfo': '第 {page} / {pages} 页',
+        'batch.openCache': '打开会话缓存目录',
+        'batch.refresh': '刷新缓存',
+        'batch.cleanCache': '同时清理投影缓存',
+        'batch.deleteAll': '删除全部会话',
+        'batch.confirmAll': '确认删除全部 {n} 个？',
+        'batch.rowOwn': '本会话自身',
+        'batch.rowFamily': '会话家族',
         'dialog.title': '删除会话',
         'dialog.desc': '将永久删除“{title}”：会话日志、工程记录与投影缓存都会被移除，无法撤销。',
         'dialog.untitled': '未命名会话',
@@ -93,6 +120,27 @@ window.__ModuleLoader__.load({
         'dialog.untitledItem': '未命名',
         'dialog.confirmCount': '删除 {n} 个会话',
         'dialog.confirmStopCount': '停止并删除 {n} 个会话',
+        'dialog.openMainDirectory': '打开主会话目录',
+        'dialog.openDirectory': '打开目录',
+        'dialog.folder': '打开这个节点对应的本地目录',
+        'dialog.folderNone': '这个节点没有独立的本地目录',
+        'dialog.lastActive': '最后活跃：{time}',
+        'dialog.totalTokens': '总计消耗',
+        'dialog.hitRate': '缓存命中率',
+        'dialog.cacheHit': '缓存输入命中',
+        'dialog.cacheMiss': '缓存输入未命中',
+        'dialog.cacheOutput': '缓存输出',
+        'dialog.lastActiveLabel': '最后活跃',
+        'dialog.selfTotal': '本会话自身',
+        'dialog.familyTotal': '主会话分支总量',
+        'dialog.noUsage': '还没有模型请求记录',
+        'dialog.incomplete': '统计不完整：{note}',
+        'dialog.openFailed': '打开目录失败：{message}',
+        'dialog.opened': '已在文件管理器中打开',
+        'dialog.usageCard': '会话用量',
+        'dialog.familyCard': '会话家族',
+        'dialog.tokensUnit': 'Tokens',
+        'dialog.siblingsNote': '该会话包含 {subagents} 个子会话和 {derived} 个派生会话。',
       },
       en: {
         'menu.delete': 'Delete conversation',
@@ -120,6 +168,30 @@ window.__ModuleLoader__.load({
         'batch.deletePartial': '{n} failed; the rest were deleted.',
         'batch.stoppingNote': 'Confirming stops the unfinished work in these conversations first, then deletes them.',
         'batch.unknown': 'The whole conversation list could not be read; deleting is still possible.',
+        'batch.totalSessions': 'Conversations',
+        'batch.search': 'Search by name',
+        'batch.sort': 'Sort by',
+        'batch.sortRecent': 'Last active',
+        'batch.sortTokens': 'Token usage',
+        'batch.sortHit': 'Cache hit rate',
+        'batch.filterKind': 'Filter by kind',
+        'batch.filterAllKinds': 'All kinds',
+        'batch.kindRoot': 'Main conversation',
+        'batch.kindDerived': 'Forked conversation',
+        'batch.kindSubagent': 'Subagent',
+        'batch.filterWorkspace': 'Filter by Workspace',
+        'batch.filterAllWorkspaces': 'All Workspaces',
+        'batch.selectPage': 'Select this page ({n})',
+        'batch.prevPage': 'Previous',
+        'batch.nextPage': 'Next',
+        'batch.pageInfo': 'Page {page} of {pages}',
+        'batch.openCache': 'Open cache folder',
+        'batch.refresh': 'Refresh cache',
+        'batch.cleanCache': 'Also clear projection cache',
+        'batch.deleteAll': 'Delete every conversation',
+        'batch.confirmAll': 'Confirm deleting all {n}?',
+        'batch.rowOwn': 'This conversation',
+        'batch.rowFamily': 'Whole family',
         'dialog.title': 'Delete conversation',
         'dialog.desc': '“{title}” will be deleted permanently: its session log, workspace account and projection cache are removed. This cannot be undone.',
         'dialog.untitled': 'Untitled conversation',
@@ -153,6 +225,27 @@ window.__ModuleLoader__.load({
         'dialog.untitledItem': 'Untitled',
         'dialog.confirmCount': 'Delete {n} conversations',
         'dialog.confirmStopCount': 'Stop and delete {n} conversations',
+        'dialog.openMainDirectory': 'Open conversation folder',
+        'dialog.openDirectory': 'Open folder',
+        'dialog.folder': 'Open this node’s folder',
+        'dialog.folderNone': 'This node has no folder of its own',
+        'dialog.lastActive': 'Last active: {time}',
+        'dialog.totalTokens': 'Total tokens',
+        'dialog.hitRate': 'Cache hit rate',
+        'dialog.cacheHit': 'Cache-hit input',
+        'dialog.cacheMiss': 'Cache-miss input',
+        'dialog.cacheOutput': 'Output',
+        'dialog.lastActiveLabel': 'Last active',
+        'dialog.selfTotal': 'This conversation',
+        'dialog.familyTotal': 'Whole branch',
+        'dialog.noUsage': 'No model request recorded yet',
+        'dialog.incomplete': 'Count incomplete: {note}',
+        'dialog.openFailed': 'Could not open the folder: {message}',
+        'dialog.opened': 'Opened in the file manager',
+        'dialog.usageCard': 'Usage',
+        'dialog.familyCard': 'Conversation family',
+        'dialog.tokensUnit': 'tokens',
+        'dialog.siblingsNote': 'This conversation contains {subagents} subagent and {derived} forked conversation(s).',
       },
     }
 
@@ -229,6 +322,26 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Ask the Host to open one Session's local directory in the file manager.
+     *
+     * The body names a Session, never a path: the Host resolves and validates the
+     * directory itself, so the Client cannot be tricked into launching a shell on
+     * an arbitrary folder.
+     * @param sessionId - the Session whose folder should open.
+     * @returns {Promise<object>} the Host's answer, carrying the opened path.
+     */
+    async function openSessionDirectory(sessionId) {
+      const response = await fetch(OPEN_DIRECTORY_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
+      return payload
+    }
+
+    /**
      * Ask the Host half to delete one Session.
      * @param sessionId - the Session the user acted on.
      * @param stop - whether running work may be stopped first.
@@ -240,6 +353,30 @@ window.__ModuleLoader__.load({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ sessionId, stop: stop === true, descendants }),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
+      return payload
+    }
+
+    /** Ask the Host to open DSH's projection-cache folder. */
+    async function openCacheDirectory() {
+      const response = await fetch(OPEN_CACHE_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
+      return payload
+    }
+
+    /** Ask the Host to drop every cached usage fold before the next read. */
+    async function refreshSessionStats() {
+      const response = await fetch(REFRESH_STATS_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
       })
       const payload = await response.json().catch(() => null)
       if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
@@ -258,12 +395,13 @@ window.__ModuleLoader__.load({
      * Ask the Host half to delete one root and the descendants it was left with.
      * @param roots - the ticked roots, each with its own descendant selection.
      * @param stop - whether running work may be stopped first.
+     * @param cleanCache - whether the projection cache goes with each Session.
      */
-    async function deleteBatch(roots, stop) {
+    async function deleteBatch(roots, stop, cleanCache) {
       const response = await fetch(BATCH_PATH, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ roots, stop: stop === true }),
+        body: JSON.stringify({ roots, stop: stop === true, cleanCache: cleanCache !== false }),
       })
       const payload = await response.json().catch(() => null)
       if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
@@ -516,6 +654,9 @@ window.__ModuleLoader__.load({
       const [selected, setSelected] = useState(null)
       const [collapsed, setCollapsed] = useState({})
       const dialog = useRef(null)
+      /** The Session whose folder is opening right now, and the last failure. */
+      const [openingFolder, setOpeningFolder] = useState(null)
+      const [folderError, setFolderError] = useState(null)
 
       const close = useCallback(() => {
         setState((previous) => {
@@ -524,6 +665,24 @@ window.__ModuleLoader__.load({
           return IDLE
         })
         setSelected(null)
+      }, [])
+
+      /**
+       * Open one row's folder through the Host. The Host owns the path, so this
+       * only says which Session; a refusal (no directory, backend without the
+       * hook) comes back as a readable message on the summary card.
+       */
+      const openFolder = useCallback((sessionId) => {
+        if (typeof sessionId !== 'string' || sessionId === '') return
+        setOpeningFolder(sessionId)
+        setFolderError(null)
+        openSessionDirectory(sessionId).then(
+          () => setOpeningFolder(null),
+          (reason) => {
+            setOpeningFolder(null)
+            setFolderError(reason instanceof Error ? reason.message : String(reason))
+          },
+        )
       }, [])
 
       // Every open re-reads the Host's state: the answer is only true for the
@@ -649,7 +808,30 @@ window.__ModuleLoader__.load({
           'aria-modal': 'true',
           'aria-label': t('dialog.title'),
         }, [
-          h('h2', { className: 'dsd-title', key: 'title', children: t('dialog.title') }),
+          h('div', { className: 'dsd-head', key: 'head' }, [
+            h('span', { className: 'dsd-headIcon', key: 'icon', 'aria-hidden': true, children: treeGlyph('trash', 18) }),
+            h('h2', { className: 'dsd-title', key: 'title', children: t('dialog.title') }),
+            h('button', {
+              type: 'button',
+              className: 'dsd-close',
+              key: 'close',
+              'aria-label': t('dialog.cancel'),
+              onClick: close,
+              children: '×',
+            }),
+          ]),
+          info === null
+            ? null
+            : h(SessionSummary, {
+              key: 'summary',
+              title,
+              usage: info.usage?.self,
+              familyUsage: info.usage?.family,
+              directory: info.directory,
+              onOpen: () => openFolder(request.sessionId),
+              opening: openingFolder === request.sessionId,
+              openError: folderError,
+            }),
           h('p', { className: 'dsd-desc', key: 'desc', children: t('dialog.desc', { title }) }),
           activity.length === 0
             ? null
@@ -679,6 +861,11 @@ window.__ModuleLoader__.load({
             collapsed,
             setCollapsed,
             disabled: state.busy,
+            onOpenDirectory: openFolder,
+            mainUsage: info?.usage?.self,
+            mainFamilyUsage: info?.usage?.family,
+            mainDirectory: info?.directory,
+            mainSessionId: request.sessionId,
             leafName: t('dialog.untitledItem'),
           }),
           info?.descendants?.truncated === true
@@ -709,6 +896,20 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsd-footer', key: 'footer' }, [
             h('button', {
               type: 'button',
+              className: 'dsd-button dsd-outline dsd-footerLeft',
+              key: 'folder',
+              disabled: state.busy || info?.directory?.available !== true || openingFolder === request.sessionId,
+              title: info?.directory?.available === true
+                ? (info.directory.path ?? '')
+                : (info?.directory?.reason ?? t('dialog.folderNone')),
+              onClick: () => openFolder(request.sessionId),
+              children: [
+                h('span', { className: 'dsd-ghostIcon', key: 'icon', children: folderGlyph(14) }),
+                t('dialog.openMainDirectory'),
+              ],
+            }),
+            h('button', {
+              type: 'button',
               className: 'dsd-button dsd-outline',
               key: 'cancel',
               disabled: state.busy,
@@ -717,7 +918,7 @@ window.__ModuleLoader__.load({
             }),
             h('button', {
               type: 'button',
-              className: 'dsd-button dsd-outline dsd-dangerText',
+              className: 'dsd-button dsd-solid dsd-danger',
               key: 'confirm',
               disabled: state.busy || checking,
               onClick: confirm,
@@ -766,6 +967,13 @@ window.__ModuleLoader__.load({
         ['path', { d: 'M6.67 8.67a3.33 3.33 0 0 0 5.03.36l2-2a3.33 3.33 0 0 0-4.71-4.71l-1.15 1.14' }],
         ['path', { d: 'M9.33 7.33a3.33 3.33 0 0 0-5.03-.36l-2 2a3.33 3.33 0 0 0 4.71 4.71l1.14-1.14' }],
       ],
+      // The delete icon the dialog header and the menu row share: a bin.
+      trash: [
+        ['path', { d: 'M3 4.6h10' }],
+        ['path', { d: 'M6.2 4.6V3.4a.8.8 0 0 1 .8-.8h2a.8.8 0 0 1 .8.8v1.2' }],
+        ['path', { d: 'M4.2 4.6l.6 8.1a1 1 0 0 0 1 .9h4.4a1 1 0 0 0 1-.9l.6-8.1' }],
+        ['path', { d: 'M6.9 7.1v4.2M9.1 7.1v4.2' }],
+      ],
     }
 
     /** One outline glyph, drawn at the given box size. */
@@ -784,6 +992,227 @@ window.__ModuleLoader__.load({
         focusable: 'false',
         style: { display: 'block' },
       }, TREE_GLYPHS[name].map((entry, index) => h(entry[0], { key: index, ...entry[1] })))
+    }
+
+    /**
+     * Compact token count: 872, 48.7K, 1.2M. One decimal at most, a bare zero
+     * for a Session that has not run yet, so a metric row never changes width
+     * with a locale's own digit grouping.
+     */
+    function formatTokens(value) {
+      const n = typeof value === 'number' && Number.isFinite(value) ? value : 0
+      if (n <= 0) return '0'
+      if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+      if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}K`
+      return String(Math.round(n))
+    }
+
+    /** A 0..1 rate as a one-decimal percentage; never a bare NaN. */
+    function formatPercent(rate) {
+      const value = typeof rate === 'number' && Number.isFinite(rate) ? Math.max(0, Math.min(1, rate)) : 0
+      return `${(value * 100).toFixed(1)}%`
+    }
+
+    /** A log timestamp as `YYYY-MM-DD HH:mm`, in the viewer's own time zone. */
+    function formatMoment(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return ''
+      const at = new Date(value)
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`
+    }
+
+    /**
+     * The three shares the bar and the legend report.
+     *
+     * The denominator is every token shown in the bar, so the three percentages
+     * always add up to 100 and neither the bar nor the legend can silently drop a
+     * bucket. `cacheWriteTokens` is folded into the miss share for the same
+     * reason: it is prompt the provider did not serve from cache.
+     */
+    function sharesOf(usage) {
+      const read = Math.max(0, usage?.cacheReadInputTokens ?? 0)
+      const miss = Math.max(0, usage?.cacheMissInputTokens ?? 0) + Math.max(0, usage?.cacheWriteTokens ?? 0)
+      const output = Math.max(0, usage?.outputTokens ?? 0)
+      const total = read + miss + output
+      if (total <= 0) return { read: 0, miss: 0, output: 0, total: 0 }
+      return { read: read / total, miss: miss / total, output: output / total, total }
+    }
+
+    /** One 16px outline glyph from a list of [tag, attributes] pairs. */
+    function strokeGlyph(paths, size) {
+      return h('svg', {
+        viewBox: '0 0 16 16',
+        width: size,
+        height: size,
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.3,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        xmlns: 'http://www.w3.org/2000/svg',
+        'aria-hidden': true,
+        focusable: 'false',
+        style: { display: 'block' },
+      }, paths.map((entry, index) => h(entry[0], { key: index, ...entry[1] })))
+    }
+
+    /** The folder a row's open button draws. */
+    function folderGlyph(size) {
+      return strokeGlyph([
+        ['path', { key: 'body', d: 'M2 4.6A1.6 1.6 0 0 1 3.6 3h2.5l1.4 1.7h5A1.5 1.5 0 0 1 14 6.2v5.2a1.6 1.6 0 0 1-1.6 1.6h-8.8A1.6 1.6 0 0 1 2 11.4z' }],
+      ])
+    }
+
+    /** The clock the metric row draws before the last-activity time. */
+    function clockGlyph(size) {
+      return strokeGlyph([
+        ['circle', { key: 'c', cx: 8, cy: 8, r: 5.75 }],
+        ['path', { key: 'h', d: 'M8 4.9V8l2.2 1.4' }],
+      ])
+    }
+
+    /** The stacked coins the total-token metric draws. */
+    function tokensGlyph(size) {
+      return strokeGlyph([
+        ['ellipse', { key: 't', cx: 8, cy: 4.6, rx: 4.9, ry: 1.9 }],
+        ['path', { key: 'b', d: 'M3.1 4.6v3.1c0 1.05 2.19 1.9 4.9 1.9s4.9-.85 4.9-1.9V4.6' }],
+        ['path', { key: 'b2', d: 'M3.1 7.7v3.1c0 1.05 2.19 1.9 4.9 1.9s4.9-.85 4.9-1.9V7.7' }],
+      ])
+    }
+
+    /** The shield the cache-hit metric draws. */
+    function cacheGlyph(size) {
+      return strokeGlyph([
+        ['path', { key: 's', d: 'M8 2.2 12.6 4v4.1c0 2.6-1.9 4.6-4.6 5.7-2.7-1.1-4.6-3.1-4.6-5.7V4z' }],
+        ['path', { key: 't', d: 'M5.9 8.1 7.4 9.6l2.9-3' }],
+      ])
+    }
+
+    /**
+     * The horizontal three-way bar: cache-hit input, cache-miss input, output.
+     *
+     * Rendered from flex-grow shares rather than pixel widths, so it fits any
+     * dialog width, stays crisp on a HiDPI screen and never overflows when one
+     * bucket dominates. An empty Session draws a track with no segments.
+     */
+    function UsageBar(props) {
+      const shares = sharesOf(props.usage)
+      if (shares.total <= 0) {
+        return h('div', { className: 'dsd-bar dsd-barEmpty', key: 'bar', 'aria-hidden': true })
+      }
+      const segment = (share, className, key) => (share > 0
+        ? h('span', { key, className: `dsd-barSeg ${className}`, style: { flexGrow: share } })
+        : null)
+      return h('div', {
+        className: 'dsd-bar',
+        key: 'bar',
+        role: 'img',
+        'aria-label': `${t('dialog.cacheHit')} ${formatPercent(shares.read)}，${t('dialog.cacheMiss')} ${formatPercent(shares.miss)}，${t('dialog.cacheOutput')} ${formatPercent(shares.output)}`,
+      }, [
+        segment(shares.read, 'dsd-hit', 'hit'),
+        segment(shares.miss, 'dsd-miss', 'miss'),
+        segment(shares.output, 'dsd-out', 'output'),
+      ])
+    }
+
+    /** The three labelled percentages under a bar. */
+    function UsageLegend(props) {
+      const usage = props.usage ?? {}
+      const shares = sharesOf(usage)
+      const rows = [
+        ['dsd-hit', t('dialog.cacheHit'), usage.cacheReadInputTokens ?? 0],
+        ['dsd-miss', t('dialog.cacheMiss'), (usage.cacheMissInputTokens ?? 0) + (usage.cacheWriteTokens ?? 0)],
+        ['dsd-out', t('dialog.cacheOutput'), usage.outputTokens ?? 0],
+      ]
+      return h('div', { className: 'dsd-legend' }, rows.map(([className, label, value]) => {
+        const share = shares.total <= 0 ? 0 : value / shares.total
+        return h('span', { className: 'dsd-legendItem', key: className }, [
+          h('span', { className: `dsd-dot ${className}`, key: 'dot', 'aria-hidden': true }),
+          h('span', { className: 'dsd-legendLabel', key: 'label', children: `${label}：` }),
+          h('span', { className: 'dsd-legendValue', key: 'value', children: `${formatTokens(value)} · ${formatPercent(share)}` }),
+        ])
+      }))
+    }
+
+    /**
+     * One metric cell: a glyph, a caption and a value.
+     * @param {object} props - the glyph, label and text.
+     */
+    function Metric(props) {
+      return h('span', { className: 'dsd-metric', title: props.title }, [
+        h('span', { className: `dsd-metricGlyph ${props.tone ?? ''}`, key: 'glyph', 'aria-hidden': true, children: props.glyph }),
+        h('span', { className: 'dsd-metricBody', key: 'body' }, [
+          h('span', { className: 'dsd-metricLabel', key: 'label', children: props.label }),
+          h('span', { className: 'dsd-metricValue', key: 'value', children: props.value }),
+        ]),
+      ])
+    }
+
+    /**
+     * The summary card at the top of the single-Session dialog (reference
+     * layout A): who the conversation is, when it last ran, what it cost, how
+     * much of that was served from cache, and the one action that opens its
+     * folder.
+     * @param {object} props - title, usage, directory, open state and the open callback.
+     */
+    function SessionSummary(props) {
+      const { title, usage, familyUsage, directory, onOpen, opening, openError } = props
+      const available = directory?.available === true
+      const lastActive = formatMoment(usage?.lastActivityAt)
+      const hitRate = typeof usage?.hitRate === 'number' ? usage.hitRate : 0
+      const familyTotal = familyUsage?.totalTokens ?? 0
+      return h('section', { className: 'dsd-card dsd-cardSummary' }, [
+        h('div', { className: 'dsd-cardHead', key: 'head' }, [
+          h('span', { className: 'dsd-avatar', key: 'avatar', 'aria-hidden': true, children: treeGlyph('session', 18) }),
+          h('h3', { className: 'dsd-cardTitle', key: 'title', title: title, children: title }),
+          h('button', {
+            type: 'button',
+            className: 'dsd-ghost',
+            key: 'open',
+            disabled: !available || opening === true,
+            title: available ? (directory.path ?? '') : (directory?.reason ?? t('dialog.folderNone')),
+            onClick: () => onOpen(),
+            children: [
+              h('span', { className: 'dsd-ghostIcon', key: 'icon', children: folderGlyph(14) }),
+              t('dialog.openDirectory'),
+            ],
+          }),
+        ]),
+        h('div', { className: 'dsd-metrics', key: 'metrics' }, [
+          h(Metric, {
+            key: 'last',
+            glyph: clockGlyph(12),
+            label: t('dialog.lastActiveLabel'),
+            value: lastActive === '' ? '—' : lastActive,
+          }),
+          h(Metric, {
+            key: 'tokens',
+            glyph: tokensGlyph(12),
+            tone: 'dsd-toneBlue',
+            label: t('dialog.totalTokens'),
+            value: `${formatTokens(usage?.totalTokens ?? 0)} ${t('dialog.tokensUnit')}`,
+          }),
+          h(Metric, {
+            key: 'family',
+            glyph: tokensGlyph(12),
+            tone: 'dsd-toneBlue',
+            label: t('dialog.familyTotal'),
+            value: `${formatTokens(familyTotal)} ${t('dialog.tokensUnit')}`,
+          }),
+          h(Metric, {
+            key: 'hit',
+            glyph: cacheGlyph(12),
+            tone: 'dsd-toneGreen',
+            label: t('dialog.hitRate'),
+            value: formatPercent(hitRate),
+          }),
+        ]),
+        h(UsageBar, { key: 'bar', usage }),
+        h(UsageLegend, { key: 'legend', usage }),
+        usage?.note ? h('p', { className: 'dsd-noteHint', key: 'note', children: t('dialog.incomplete', { note: usage.note }) }) : null,
+        familyUsage?.note ? h('p', { className: 'dsd-noteHint', key: 'familyNote', children: t('dialog.incomplete', { note: familyUsage.note }) }) : null,
+        openError ? h('p', { className: 'dsd-error', key: 'openError', children: t('dialog.openFailed', { message: openError }) }) : null,
+      ])
     }
 
     /**
@@ -867,7 +1296,10 @@ window.__ModuleLoader__.load({
 
       /** A set of ids read as a checkbox state. */
       const stateOf = (ids) => {
-        let on = ids.length > 0
+        // An empty set is a row that covers nothing beyond itself: a main
+        // conversation with no children at all. It is still deleted with the
+        // row, so it reads as ticked instead of as an impossible choice.
+        let on = true
         let some = false
         for (const id of ids) {
           if (selected.has(id)) some = true
@@ -915,52 +1347,71 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * One collapsible block: the direct children of one row that share one kind.
-       * @param {string} collapseKey - unique to this parent and kind.
-       * @param {string} label - the block's text, already counted.
-       * @param {string} glyphName - the glyph the heading carries.
-       * @param {object[]} members - the child nodes the block lists.
-       * @param {number} depth - the indent the heading sits at; members sit one deeper.
+       * One row's right-hand figures: the token total it owns, when it last ran,
+       * and the folder button that opens its own directory.
+       *
+       * The button sits outside the row's <label>, so pressing it opens the
+       * folder instead of toggling the row's checkbox. A node the Host could not
+       * locate keeps the button disabled, with the reason as its tooltip, rather
+       * than offering an action that would fail.
        */
-      const drawBlock = (collapseKey, label, glyphName, members, depth) => {
-        const isCollapsed = collapsed[collapseKey] === true
-        const ids = members.flatMap((member) => subtreeIds(member))
-        return h('div', { className: 'dsd-block', key: collapseKey }, [
-          h('div', {
-            className: 'dsd-node dsd-nodeBranch',
-            key: 'head',
-            style: { paddingInlineStart: (depth * INDENT) + 'px' },
-          }, [
-            caret(collapseKey, true, isCollapsed),
-            h('label', { className: 'dsd-nodeLabel', key: 'label' }, [
-              box(ids),
-              h('span', { className: 'dsd-rowIcon', key: 'glyph', children: treeGlyph(glyphName, 14) }),
-              h('span', { className: 'dsd-rowText', key: 'text' }, [
-                h('span', { className: 'dsd-blockTitle', key: 'name', children: label }),
-              ]),
-            ]),
-          ]),
-          isCollapsed
+      const figuresOf = (usage, directory, sessionId, familyUsage) => {
+        // The bulk dialog draws the same tree without usage or directories: a row
+        // that has neither keeps the plain shape instead of a column of zeros and
+        // a dead button.
+        if ((usage === null || usage === undefined) && (directory === null || directory === undefined)) return null
+        const available = directory?.available === true
+        const own = usage?.totalTokens ?? 0
+        const branch = familyUsage?.totalTokens ?? 0
+        const hasBranch = familyUsage !== null && familyUsage !== undefined
+        // The root row carries `own/branch`, so the two quantities can never be
+        // read as one; every child row carries its own count alone.
+        const tokenText = hasBranch ? `${formatTokens(own)}/${formatTokens(branch)}` : formatTokens(own)
+        return h('span', { className: 'dsd-figures', key: 'figures' }, [
+          usage === null || usage === undefined
             ? null
-            : h('div', { className: 'dsd-children', key: 'rows' }, members.map((member) => drawNode(member, depth + 1, member.id))),
+            : h('span', {
+              className: 'dsd-nodeTokens',
+              key: 'tokens',
+              title: hasBranch
+                ? `${t('dialog.selfTotal')}：${formatTokens(own)}\n${t('dialog.familyTotal')}：${formatTokens(branch)}`
+                : `${t('dialog.selfTotal')}：${formatTokens(own)}`,
+              children: tokenText,
+            }),
+          usage?.lastActivityAt
+            ? h('span', { className: 'dsd-nodeTime', key: 'time', children: formatMoment(usage.lastActivityAt) })
+            : null,
+          h('button', {
+            type: 'button',
+            className: 'dsd-folder',
+            key: 'folder',
+            disabled: !available,
+            title: available ? (directory.path ?? '') : (directory?.reason ?? t('dialog.folderNone')),
+            'aria-label': available ? t('dialog.folder') : t('dialog.folderNone'),
+            onClick: (event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              if (available && typeof props.onOpenDirectory === 'function') props.onOpenDirectory(sessionId)
+            },
+          }, folderGlyph(14)),
         ])
       }
 
-      /** One Session row, then the blocks holding its own direct children. */
-      const drawNode = (node, depth, key) => {
+      /**
+       * One Session row and, under it, its own children as a real nested
+       * subtree: a subagent that spawned its own subagent sits one level deeper,
+       * a fork's children hang under the fork. The level comes from the Host's
+       * `parentId` chain alone, never from a fixed order of kinds.
+       */
+      const drawNode = (node, key) => {
         const entry = node.entry
         const isCollapsed = collapsed[node.id] === true
-        const subagents = node.children.filter((child) => child.entry.kind === 'subagent')
-        const forks = node.children.filter((child) => child.entry.kind !== 'subagent')
+        const hasChildren = node.children.length > 0
         const hints = badgesOf(entry)
-        const glyphName = entry.kind === 'subagent' ? 'member' : entry.kind === 'root' ? 'session' : 'chat'
+        const glyphName = entry.kind === 'subagent' ? 'subagent' : entry.kind === 'root' ? 'session' : 'chat'
         return h('div', { className: 'dsd-branch', key }, [
-          h('div', {
-            className: 'dsd-node',
-            key: 'row',
-            style: { paddingInlineStart: (depth * INDENT) + 'px' },
-          }, [
-            caret(node.id, node.children.length > 0, isCollapsed),
+          h('div', { className: 'dsd-node', key: 'row' }, [
+            caret(node.id, hasChildren, isCollapsed),
             h('label', { className: 'dsd-nodeLabel', key: 'label' }, [
               box(subtreeIds(node)),
               h('span', { className: 'dsd-rowIcon', key: 'glyph', children: treeGlyph(glyphName, 14) }),
@@ -970,23 +1421,16 @@ window.__ModuleLoader__.load({
                   key: 'name',
                   children: entry.title === undefined || entry.title === '' ? leafName : entry.title,
                 }),
-                h('span', { className: 'dsd-rowId', key: 'id', children: shortId(entry.id) }),
               ]),
             ]),
             hints.length === 0
               ? null
               : h('span', { className: 'dsd-badge', key: 'badge', children: hints.join(' · ') }),
+            figuresOf(entry.usage, entry.directory, entry.id),
           ]),
-          isCollapsed || node.children.length === 0
+          isCollapsed || !hasChildren
             ? null
-            : h('div', { className: 'dsd-children', key: 'children' }, [
-              subagents.length === 0
-                ? null
-                : drawBlock('sub:' + node.id, t('dialog.group.subagentsCount', { n: subagents.length }), 'subagent', subagents, depth + 1),
-              forks.length === 0
-                ? null
-                : drawBlock('fork:' + node.id, t('dialog.group.derivedCount', { n: forks.length }), 'linked', forks, depth + 1),
-            ]),
+            : h('div', { className: 'dsd-children', key: 'children' }, node.children.map((child) => drawNode(child, child.id))),
         ])
       }
 
@@ -1008,11 +1452,14 @@ window.__ModuleLoader__.load({
                 }),
               ]),
             ]),
+            figuresOf(props.mainUsage, props.mainDirectory, props.mainSessionId, props.mainFamilyUsage),
           ])
           : null,
+        // The first level is a child list too, so the connector line starts
+        // under the root row the way the reference layout draws it.
         hasMain && mainCollapsed
           ? null
-          : forest.map((node) => drawNode(node, hasMain ? 1 : 0, node.id)),
+          : h('div', { className: 'dsd-children dsd-childrenRoot', key: 'roots' }, forest.map((node) => drawNode(node, node.id))),
       ])
     }
 
@@ -1027,12 +1474,37 @@ window.__ModuleLoader__.load({
      * with it, and a child can be taken back off that family, which is the same
      * choice the single Session dialog offers.
      */
+    /** How many top-level family rows one page renders. */
+    const BULK_PAGE_SIZE = 40
+
+    /**
+     * The batch management surface.
+     *
+     * Layout follows the reference: a corpus card (Session count, total tokens,
+     * global hit rate, three-way bar), then a searchable and sortable list, then
+     * a fixed action bar. Every number comes from the Host; this component only
+     * groups, sorts and draws.
+     *
+     * A row shows its own usage. A row that has children shows `own/branch`,
+     * the family total after a slash, so the two quantities never read as one.
+     * Forked conversations are roots of their own with the parent named under
+     * them; subagents stay folded into their parent's row until it is expanded.
+     */
     function BulkDeleteDialog() {
       const open = useSyncExternalStore(subscribeBulk, getBulkOpen)
       const [state, setState] = useState({ phase: 'idle', catalog: null, error: null, busy: false })
       const [selected, setSelected] = useState(null)
-      const [collapsed, setCollapsed] = useState({})
+      const [expanded, setExpanded] = useState({})
+      const [query, setQuery] = useState('')
+      const [sort, setSort] = useState('recent')
+      const [kindFilter, setKindFilter] = useState('all')
+      const [workspaceFilter, setWorkspaceFilter] = useState('all')
+      const [page, setPage] = useState(0)
       const [stop, setStop] = useState(true)
+      const [confirmAll, setConfirmAll] = useState(false)
+      const [cacheError, setCacheError] = useState(null)
+      const [openingCache, setOpeningCache] = useState(false)
+      const [refreshing, setRefreshing] = useState(false)
       const dialog = useRef(null)
 
       const close = useCallback(() => {
@@ -1040,8 +1512,37 @@ window.__ModuleLoader__.load({
           ? previous
           : { phase: 'idle', catalog: null, error: null, busy: false }))
         setSelected(null)
+        setExpanded({})
+        setQuery('')
+        setSort('recent')
+        setKindFilter('all')
+        setWorkspaceFilter('all')
+        setPage(0)
+        setConfirmAll(false)
         setBulkOpen(false)
       }, [])
+
+      /** Drop the Host-side fold cache, then read the corpus again. */
+      const refresh = useCallback(() => {
+        if (refreshing) return
+        setRefreshing(true)
+        refreshSessionStats().then(
+          () => fetchCatalog().then(
+            (catalog) => {
+              setRefreshing(false)
+              setState((previous) => ({ ...previous, catalog, error: null }))
+            },
+            (reason) => {
+              setRefreshing(false)
+              setState((previous) => ({ ...previous, error: reason instanceof Error ? reason.message : String(reason) }))
+            },
+          ),
+          (reason) => {
+            setRefreshing(false)
+            setState((previous) => ({ ...previous, error: reason instanceof Error ? reason.message : String(reason) }))
+          },
+        )
+      }, [refreshing])
 
       // The list is re-read on every open: a batch view is only true for the
       // moment it was read, and the sidebar may have changed in between.
@@ -1050,15 +1551,14 @@ window.__ModuleLoader__.load({
         let cancelled = false
         setState({ phase: 'loading', catalog: null, error: null, busy: false })
         setSelected(new Set())
-        setCollapsed({})
-        setStop(true)
+        setExpanded({})
+        setPage(0)
+        setConfirmAll(false)
+        setCacheError(null)
         fetchCatalog().then(
           (catalog) => {
             if (cancelled) return
-            const next = {}
-            for (const group of catalog?.workspaces ?? []) next[group.key] = false
             setState({ phase: 'ready', catalog, error: null, busy: false })
-            setCollapsed(next)
           },
           (reason) => {
             if (cancelled) return
@@ -1088,20 +1588,128 @@ window.__ModuleLoader__.load({
         if (open) dialog.current?.focus()
       }, [open])
 
+      const catalog = state.catalog
+      const summary = catalog?.summary ?? null
+      const busy = state.busy
+      const picked = selected ?? new Set()
+
+      const flatRows = React.useMemo(() => {
+        const out = []
+        for (const group of catalog?.workspaces ?? []) {
+          for (const entry of group.sessions ?? []) {
+            out.push({
+              ...entry,
+              workspaceKey: group.key,
+              workspaceId: group.workspaceId ?? null,
+              workspaceTitle: group.title ?? '',
+            })
+          }
+        }
+        return out
+      }, [catalog])
+
+      // The family forest used for drawing: a fork is a root of its own, a
+      // subagent hangs under whatever spawned it.
+      const forest = React.useMemo(() => {
+        const byId = new Map(flatRows.map((entry) => [entry.id, { entry, children: [] }]))
+        const roots = []
+        for (const node of byId.values()) {
+          const parentId = node.entry.parentId
+          const parent = typeof parentId === 'string' && parentId !== node.entry.id ? byId.get(parentId) : undefined
+          if (parent === undefined) roots.push(node)
+          else parent.children.push(node)
+        }
+        // A hand-edited header cycle would otherwise leave a whole family
+        // unreachable; anything the walk cannot reach becomes a root.
+        const reached = new Set()
+        const mark = (node) => {
+          if (reached.has(node.entry.id)) return
+          reached.add(node.entry.id)
+          for (const child of node.children) mark(child)
+        }
+        for (const root of roots) mark(root)
+        for (const node of byId.values()) {
+          if (reached.has(node.entry.id)) continue
+          roots.push(node)
+          mark(node)
+        }
+        return { byId, roots }
+      }, [flatRows])
+
       if (!open) return null
 
-      const catalog = state.catalog
-      const groups = (catalog?.workspaces ?? []).map((group) => ({
-        ...group,
-        items: Array.isArray(group.sessions) ? group.sessions : [],
-      }))
-      const allIds = groups.flatMap((group) => group.items.map((entry) => entry.id))
-      const picked = selected ?? new Set()
-      const busy = state.busy
-      const chosenCount = allIds.filter((id) => picked.has(id)).length
-      const allChosen = allIds.length > 0 && chosenCount === allIds.length
+      /** Every descendant node of one node, depth first. */
+      const descendantsOf = (node) => {
+        const out = []
+        const walk = (current) => {
+          for (const child of current.children) {
+            out.push(child)
+            walk(child)
+          }
+        }
+        walk(node)
+        return out
+      }
 
-      const toggle = (ids, on) => {
+      const needle = query.trim().toLowerCase()
+      const kindOk = (entry) => kindFilter === 'all' || entry.kind === kindFilter
+      const workspaceOk = (entry) => workspaceFilter === 'all' || String(entry.workspaceId ?? '') === workspaceFilter
+      const textOk = (entry) => needle === '' || String(entry.title ?? '').toLowerCase().includes(needle)
+      const selfOk = (entry) => kindOk(entry) && workspaceOk(entry) && textOk(entry)
+
+      const matchMemo = new Map()
+      const hasMatch = (node) => {
+        const id = node.entry.id
+        if (matchMemo.has(id)) return matchMemo.get(id)
+        let matched = selfOk(node.entry)
+        if (!matched) for (const child of node.children) if (hasMatch(child)) { matched = true; break }
+        matchMemo.set(id, matched)
+        return matched
+      }
+
+      const compare = (left, right) => {
+        const a = left.entry
+        const b = right.entry
+        if (sort === 'tokens') return (b.usage?.totalTokens ?? 0) - (a.usage?.totalTokens ?? 0)
+        if (sort === 'hit') return (b.usage?.hitRate ?? 0) - (a.usage?.hitRate ?? 0)
+        return (b.usage?.lastActivityAt ?? 0) - (a.usage?.lastActivityAt ?? 0)
+      }
+
+      const matchedRoots = [...forest.roots].filter(hasMatch).sort(compare)
+      const totalPages = Math.max(1, Math.ceil(matchedRoots.length / BULK_PAGE_SIZE))
+      const currentPage = Math.min(page, totalPages - 1)
+      const pageRoots = matchedRoots.slice(currentPage * BULK_PAGE_SIZE, currentPage * BULK_PAGE_SIZE + BULK_PAGE_SIZE)
+
+      // A page is a family slice: a root is followed by the children the user
+      // expanded, so an expanded family is never cut in half by a page boundary.
+      const visible = []
+      const walk = (node, depth) => {
+        if (!hasMatch(node)) return
+        visible.push({ node, depth })
+        const isOpen = depth <= 1 || expanded[node.entry.id] === true
+        if (!isOpen) return
+        for (const child of [...node.children].sort(compare)) walk(child, depth + 1)
+      }
+      for (const root of pageRoots) walk(root, 0)
+
+      /** One nested family branch, drawn as the same tree the single dialog uses. */
+      const drawBranch = (node, depth) => {
+        const isOpen = depth <= 1 || expanded[node.entry.id] === true
+        const children = [...node.children].sort(compare).filter(hasMatch)
+        return h('div', { className: 'dsd-branch', key: node.entry.id }, [
+          row({ node, depth }),
+          isOpen && children.length > 0
+            ? h('div', { className: 'dsd-children dsd-bulkChildren', key: 'children' },
+              children.map((child) => drawBranch(child, depth + 1)))
+            : null,
+        ])
+      }
+
+      const visibleIds = visible.map((row) => row.node.entry.id)
+      const chosenVisible = visibleIds.filter((id) => picked.has(id)).length
+      const allVisibleChosen = visibleIds.length > 0 && chosenVisible === visibleIds.length
+
+      const setMany = (ids, on) => {
         setSelected(() => {
           const next = new Set(picked)
           for (const id of ids) {
@@ -1112,28 +1720,34 @@ window.__ModuleLoader__.load({
         })
       }
 
-      /**
-       * The batch to send: every ticked row whose parent is not ticked becomes a
-       * delete root of its own, carrying the ticked rows below it. Ticking a
-       * subagent on its own therefore deletes just that subagent, and ticking a
-       * parent takes its selected family with it — the same choice the single
-       * dialog offers, with no second "exclusion" state to keep in step.
-       */
-      const confirm = () => {
-        if (busy || state.phase !== 'ready') return
+      const toggleNode = (node, on) => {
+        const ids = [node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)]
+        setMany(ids, on)
+      }
+
+      const toggleExpand = (id) => {
+        setExpanded((previous) => ({ ...previous, [id]: previous[id] !== true }))
+      }
+
+      /** The batch body: each ticked root carries the descendants also ticked. */
+      const buildRoots = () => {
         const roots = []
         const collect = (node, underChosen) => {
-          const on = picked.has(node.id)
+          const on = picked.has(node.entry.id)
           if (on && !underChosen) {
             roots.push({
-              sessionId: node.id,
-              descendants: subtreeIds(node).filter((id) => id !== node.id && picked.has(id)),
+              sessionId: node.entry.id,
+              descendants: descendantsOf(node).map((child) => child.entry.id).filter((id) => picked.has(id)),
             })
           }
           for (const child of node.children) collect(child, underChosen || on)
         }
-        for (const group of groups) for (const root of buildForest(group.items, null)) collect(root, false)
-        if (roots.length === 0) return
+        for (const root of forest.roots) collect(root, false)
+        return roots
+      }
+
+      const runDelete = (roots) => {
+        if (busy || roots.length === 0) return
         setState((previous) => ({ ...previous, busy: true, error: null }))
         deleteBatch(roots, stop).then(
           (payload) => {
@@ -1144,14 +1758,12 @@ window.__ModuleLoader__.load({
               setBulkOpen(false)
               return
             }
-            // A partial batch stays open with the survivors ticked: what was
-            // deleted is gone, and the rest can be retried by hand.
             const failedIds = new Set(failed.map((entry) => entry.sessionId))
-            setSelected(() => new Set(allIds.filter((id) => failedIds.has(id))))
+            setSelected(() => new Set(flatRows.filter((entry) => failedIds.has(entry.id)).map((entry) => entry.id)))
             setState((previous) => ({
               ...previous,
               busy: false,
-              error: t('batch.deletePartial', { n: failed.length }) + ' ' + failed.map((entry) => entry.message).join(' / '),
+              error: `${t('batch.deletePartial', { n: failed.length })} ${failed.map((entry) => entry.message).join(' / ')}`,
             }))
           },
           (reason) => {
@@ -1162,6 +1774,103 @@ window.__ModuleLoader__.load({
             }))
           },
         )
+      }
+
+      const openCache = () => {
+        setOpeningCache(true)
+        setCacheError(null)
+        openCacheDirectory().then(
+          () => setOpeningCache(false),
+          (reason) => {
+            setOpeningCache(false)
+            setCacheError(reason instanceof Error ? reason.message : String(reason))
+          },
+        )
+      }
+
+      const workspaceChoices = [...new Map(flatRows.map((entry) => [String(entry.workspaceId ?? 'none'), entry])).entries()]
+        .map(([key, entry]) => ({ key, title: entry.workspaceTitle === '' ? t('batch.ungrouped') : entry.workspaceTitle }))
+
+      const row = ({ node, depth }) => {
+        const entry = node.entry
+        const id = entry.id
+        const isCollapsed = expanded[id] !== true
+        const hasChildren = node.children.length > 0
+        const usage = entry.usage
+        const own = usage?.totalTokens ?? 0
+        const branch = entry.familyUsage?.totalTokens ?? 0
+        const hasBranch = entry.kind === 'root' && entry.familyUsage !== null && entry.familyUsage !== undefined
+        const parent = typeof entry.parentId === 'string' ? forest.byId.get(entry.parentId) : undefined
+        const glyphName = entry.kind === 'subagent' ? 'subagent' : entry.kind === 'derived' ? 'chat' : 'session'
+        const available = entry.directory?.available === true
+        return h('div', {
+          className: `dsd-bulkRow${depth > 0 ? ' dsd-bulkRowChild' : ''}`,
+          key: id,
+        }, [
+          h('button', {
+            type: 'button',
+            className: `dsd-caret${hasChildren ? '' : ' dsd-caretLeaf'}`,
+            key: 'caret',
+            disabled: !hasChildren,
+            'aria-expanded': hasChildren ? !isCollapsed : undefined,
+            'aria-label': isCollapsed ? '展开' : '收起',
+            onClick: () => toggleExpand(id),
+            children: hasChildren ? (isCollapsed ? '▸' : '▾') : '',
+          }),
+          h('input', {
+            type: 'checkbox',
+            key: 'box',
+            className: 'dsd-check',
+            checked: picked.has(id),
+            disabled: busy,
+            onChange: () => toggleNode(node, !picked.has(id)),
+          }),
+          h('span', { className: 'dsd-rowIcon', key: 'icon', children: treeGlyph(glyphName, 14) }),
+          h('div', { className: 'dsd-bulkName', key: 'name' }, [
+            h('span', {
+              className: 'dsd-bulkTitle',
+              key: 'title',
+              title: entry.title ?? '',
+              children: entry.title === undefined || entry.title === '' ? t('batch.untitled') : entry.title,
+            }),
+            entry.kind === 'derived' && parent !== undefined
+              ? h('span', { className: 'dsd-bulkOwner', key: 'owner', children: `所属：${parent.entry.title ?? t('batch.untitled')}` })
+              : null,
+          ]),
+          h('span', {
+            className: 'dsd-bulkTokens',
+            key: 'tokens',
+            title: hasBranch ? `本会话自身：${formatTokens(own)}\n会话家族：${formatTokens(branch)}` : `本会话自身：${formatTokens(own)}`,
+            children: hasBranch ? `${formatTokens(own)}/${formatTokens(branch)}` : formatTokens(own),
+          }),
+          h('span', {
+            className: 'dsd-bulkTime',
+            key: 'time',
+            children: usage?.lastActivityAt ? formatMoment(usage.lastActivityAt) : '',
+          }),
+          h('button', {
+            type: 'button',
+            className: 'dsd-folder',
+            key: 'folder',
+            disabled: !available,
+            title: available ? (entry.directory.path ?? '') : (entry.directory?.reason ?? t('dialog.folderNone')),
+            'aria-label': t('dialog.folder'),
+            onClick: () => {
+              if (!available) return
+              openSessionDirectory(id).catch((reason) => {
+                setCacheError(reason instanceof Error ? reason.message : String(reason))
+              })
+            },
+          }, folderGlyph(14)),
+        ])
+      }
+
+      const cacheUsage = {
+        cacheReadInputTokens: summary?.cacheReadInputTokens ?? 0,
+        cacheMissInputTokens: summary?.cacheMissInputTokens ?? 0,
+        cacheWriteTokens: summary?.cacheWriteTokens ?? 0,
+        outputTokens: summary?.outputTokens ?? 0,
+        totalTokens: summary?.tokens ?? 0,
       }
 
       return h('div', {
@@ -1176,7 +1885,7 @@ window.__ModuleLoader__.load({
       }, [
         h('div', { className: 'dsd-mask', key: 'mask', 'aria-hidden': true, onClick: close }),
         h('div', {
-          className: 'dsd-dialog dsd-dialogWide',
+          className: 'dsd-dialog dsd-dialogWide dsd-dialogBulk',
           key: 'dialog',
           ref: dialog,
           tabIndex: -1,
@@ -1184,8 +1893,112 @@ window.__ModuleLoader__.load({
           'aria-modal': 'true',
           'aria-label': t('batch.title'),
         }, [
-          h('h2', { className: 'dsd-title', key: 'title', children: t('batch.title') }),
+          h('div', { className: 'dsd-head', key: 'head' }, [
+            h('span', { className: 'dsd-headIcon', key: 'icon', 'aria-hidden': true, children: treeGlyph('trash', 18) }),
+            h('h2', { className: 'dsd-title', key: 'title', children: t('batch.title') }),
+            h('button', {
+              type: 'button',
+              className: 'dsd-close',
+              key: 'close',
+              'aria-label': t('batch.cancel'),
+              onClick: close,
+              children: '×',
+            }),
+          ]),
+
+          // The corpus card: one fold per Session, summed once.
+          summary === null
+            ? null
+            : h('section', { className: 'dsd-card dsd-cardSummary', key: 'corpus' }, [
+              h('div', { className: 'dsd-metrics', key: 'metrics' }, [
+                h(Metric, {
+                  key: 'count',
+                  glyph: treeGlyph('session', 12),
+                  label: t('batch.totalSessions'),
+                  value: String(summary.sessions ?? 0),
+                }),
+                h(Metric, {
+                  key: 'tokens',
+                  glyph: tokensGlyph(12),
+                  tone: 'dsd-toneBlue',
+                  label: t('dialog.totalTokens'),
+                  value: `${formatTokens(summary.tokens ?? 0)} ${t('dialog.tokensUnit')}`,
+                }),
+                h(Metric, {
+                  key: 'hit',
+                  glyph: cacheGlyph(12),
+                  tone: 'dsd-toneGreen',
+                  label: t('dialog.hitRate'),
+                  value: formatPercent(summary.hitRate ?? 0),
+                }),
+              ]),
+              h(UsageBar, { key: 'bar', usage: cacheUsage }),
+              h(UsageLegend, { key: 'legend', usage: cacheUsage }),
+            ]),
+
           h('p', { className: 'dsd-desc', key: 'desc', children: t('batch.desc') }),
+
+          // Toolbar: search, sort, filters, select-all.
+          h('div', { className: 'dsd-bulkTools', key: 'tools' }, [
+            h('input', {
+              type: 'search',
+              className: 'dsd-input',
+              key: 'search',
+              value: query,
+              placeholder: t('batch.search'),
+              'aria-label': t('batch.search'),
+              onChange: (event) => { setQuery(event.target.value); setPage(0) },
+            }),
+            h('select', {
+              className: 'dsd-select',
+              key: 'sort',
+              value: sort,
+              'aria-label': t('batch.sort'),
+              onChange: (event) => { setSort(event.target.value); setPage(0) },
+            }, [
+              h('option', { key: 'recent', value: 'recent', children: t('batch.sortRecent') }),
+              h('option', { key: 'tokens', value: 'tokens', children: t('batch.sortTokens') }),
+              h('option', { key: 'hit', value: 'hit', children: t('batch.sortHit') }),
+            ]),
+            h('select', {
+              className: 'dsd-select',
+              key: 'kind',
+              value: kindFilter,
+              'aria-label': t('batch.filterKind'),
+              onChange: (event) => { setKindFilter(event.target.value); setPage(0) },
+            }, [
+              h('option', { key: 'all', value: 'all', children: t('batch.filterAllKinds') }),
+              h('option', { key: 'root', value: 'root', children: t('batch.kindRoot') }),
+              h('option', { key: 'derived', value: 'derived', children: t('batch.kindDerived') }),
+              h('option', { key: 'subagent', value: 'subagent', children: t('batch.kindSubagent') }),
+            ]),
+            h('select', {
+              className: 'dsd-select',
+              key: 'ws',
+              value: workspaceFilter,
+              'aria-label': t('batch.filterWorkspace'),
+              onChange: (event) => { setWorkspaceFilter(event.target.value); setPage(0) },
+            }, [
+              h('option', { key: 'all', value: 'all', children: t('batch.filterAllWorkspaces') }),
+              ...workspaceChoices.map((choice) => h('option', {
+                key: choice.key,
+                value: choice.key,
+                children: choice.title,
+              })),
+            ]),
+            h('label', { className: 'dsd-bulkMaster', key: 'master' }, [
+              h('input', {
+                type: 'checkbox',
+                className: 'dsd-check',
+                checked: allVisibleChosen,
+                disabled: busy || visibleIds.length === 0,
+                ref: (node) => { if (node !== null) node.indeterminate = chosenVisible > 0 && !allVisibleChosen },
+                onChange: () => setMany(visibleIds, !allVisibleChosen),
+              }),
+              h('span', { children: t('batch.selectPage', { n: visibleIds.length }) }),
+            ]),
+          ]),
+
           state.phase === 'loading'
             ? h('p', { className: 'dsd-note', key: 'loading', children: t('batch.loading') })
             : null,
@@ -1195,146 +2008,119 @@ window.__ModuleLoader__.load({
           state.phase === 'ready' && catalog === null && state.error === null
             ? h('p', { className: 'dsd-note', key: 'unknown', children: t('batch.unknown') })
             : null,
-          state.phase === 'ready' && groups.length === 0
+          state.phase === 'ready' && catalog !== null && visible.length === 0
             ? h('p', { className: 'dsd-note', key: 'empty', children: t('batch.empty') })
-            : h('div', {
-              className: 'dsd-scroll',
-              key: 'list',
-              role: 'group',
-              'aria-label': t('batch.region'),
-            }, [
-              h('div', { className: 'dsd-toolbar', key: 'toolbar' }, [
-                h('label', { className: 'dsd-row dsd-toolbarCell', key: 'master' }, [
-                  h('input', {
-                    type: 'checkbox',
-                    key: 'box',
-                    className: 'dsd-check',
-                    checked: allChosen,
-                    disabled: busy,
-                    ref: (node) => {
-                      if (node !== null) node.indeterminate = chosenCount > 0 && !allChosen
-                    },
-                    onChange: () => toggle(allIds, !allChosen),
-                  }),
-                  h('span', {
-                    className: 'dsd-rowText',
-                    key: 'text',
-                    children: allChosen
-                      ? t('batch.selectAll', { n: chosenCount })
-                      : t('batch.partial', { m: chosenCount, n: allIds.length }),
-                  }),
-                ]),
-                h('button', {
-                  type: 'button',
-                  key: 'expand',
-                  className: 'dsd-button dsd-link',
-                  onClick: () => setCollapsed({}),
-                  children: t('batch.expandAll'),
+            : null,
+
+          h('div', { className: 'dsd-bulkList', key: 'list', role: 'group', 'aria-label': t('batch.region') },
+            pageRoots.map((root) => h('div', { className: 'dsd-bulkBlock', key: `block-${root.entry.id}` }, [
+              drawBranch(root, 0),
+            ]))),
+
+          totalPages > 1
+            ? h('div', { className: 'dsd-bulkPager', key: 'pager' }, [
+              h('button', {
+                type: 'button',
+                className: 'dsd-button dsd-link',
+                key: 'prev',
+                disabled: currentPage === 0,
+                onClick: () => setPage(Math.max(0, currentPage - 1)),
+                children: t('batch.prevPage'),
+              }),
+              h('span', { key: 'info', children: t('batch.pageInfo', { page: currentPage + 1, pages: totalPages }) }),
+              h('button', {
+                type: 'button',
+                className: 'dsd-button dsd-link',
+                key: 'next',
+                disabled: currentPage >= totalPages - 1,
+                onClick: () => setPage(Math.min(totalPages - 1, currentPage + 1)),
+                children: t('batch.nextPage'),
+              }),
+            ])
+            : null,
+
+          cacheError === null
+            ? null
+            : h('p', { className: 'dsd-error', key: 'cacheError', children: cacheError }),
+
+          // The fixed action bar.
+          h('div', { className: 'dsd-footer dsd-bulkFooter', key: 'footer' }, [
+            h('div', { className: 'dsd-bulkLeft', key: 'left' }, [
+              h('button', {
+                type: 'button',
+                className: 'dsd-button dsd-outline dsd-btnSm',
+                key: 'openCache',
+                disabled: busy || openingCache,
+                onClick: openCache,
+                children: [
+                  h('span', { className: 'dsd-ghostIcon', key: 'icon', children: folderGlyph(13) }),
+                  t('batch.openCache'),
+                ],
+              }),
+              h('button', {
+                type: 'button',
+                className: 'dsd-button dsd-outline dsd-btnSm',
+                key: 'refresh',
+                disabled: busy || refreshing,
+                onClick: refresh,
+                children: t('batch.refresh'),
+              }),
+            ]),
+            h('div', { className: 'dsd-bulkRight', key: 'right' }, [
+              h('label', { className: 'dsd-row dsd-stopRow dsd-bulkStop', key: 'stop' }, [
+                h('input', {
+                  type: 'checkbox',
+                  key: 'box',
+                  className: 'dsd-check',
+                  checked: stop,
+                  disabled: busy,
+                  onChange: () => setStop((previous) => !previous),
                 }),
-                h('button', {
-                  type: 'button',
-                  key: 'collapse',
-                  className: 'dsd-button dsd-link',
-                  onClick: () => {
-                    const next = {}
-                    for (const group of groups) next[group.key] = true
-                    setCollapsed(next)
-                  },
-                  children: t('batch.collapseAll'),
-                }),
+                h('span', { className: 'dsd-rowText', key: 'text', children: t('batch.stoppingNote') }),
               ]),
-              ...groups.map((group) => {
-                const groupIds = group.items.map((entry) => entry.id)
-                const on = groupIds.length > 0 && groupIds.every((id) => picked.has(id))
-                const isCollapsed = collapsed[group.key] === true
-                return h('section', { className: 'dsd-group', key: group.key }, [
-                  h('div', { className: 'dsd-groupHead', key: 'head' }, [
-                    h('button', {
-                      type: 'button',
-                      key: 'caret',
-                      className: 'dsd-caret',
-                      'aria-expanded': !isCollapsed,
-                      onClick: () => setCollapsed((previous) => ({ ...previous, [group.key]: !isCollapsed })),
-                      children: isCollapsed ? '▸' : '▾',
-                    }),
-                    h('label', { className: 'dsd-row dsd-groupRow', key: 'label' }, [
-                      h('input', {
-                        type: 'checkbox',
-                        key: 'box',
-                        className: 'dsd-check',
-                        checked: on,
-                        disabled: busy,
-                        title: t('batch.workspaceAll'),
-                        ref: (node) => {
-                          if (node !== null) node.indeterminate = !on && groupIds.some((id) => picked.has(id))
-                        },
-                        onChange: () => toggle(groupIds, !on),
-                      }),
-                      h('span', { className: 'dsd-rowText', key: 'text' }, [
-                        h('span', {
-                          className: 'dsd-wsTitle',
-                          key: 'title',
-                          children: group.title === '' ? t('batch.ungrouped') : group.title,
-                        }),
-                        h('span', {
-                          className: 'dsd-wsCount',
-                          key: 'count',
-                          children: t('batch.workspaceCount', { n: group.items.length }),
-                        }),
-                      ]),
-                    ]),
-                  ]),
-                  isCollapsed ? null : h('div', { className: 'dsd-rows dsd-groupRows', key: 'rows' }, [
-                    h(FamilyTree, {
-                      key: 'tree',
-                      items: group.items,
-                      implicitParent: null,
-                      main: null,
-                      selected: picked,
-                      onToggle: toggle,
-                      collapsed,
-                      setCollapsed,
-                      disabled: busy,
-                      leafName: t('batch.untitled'),
-                    }),
-                  ]),
-                ])
-              }),
-            ]),
-          h('div', { className: 'dsd-footer', key: 'footer' }, [
-            h('label', { className: 'dsd-row dsd-stopRow', key: 'stop' }, [
-              h('input', {
-                type: 'checkbox',
-                key: 'box',
-                className: 'dsd-check',
-                checked: stop,
+              h('button', {
+                type: 'button',
+                className: 'dsd-button dsd-outline',
+                key: 'cancel',
                 disabled: busy,
-                onChange: () => setStop((previous) => !previous),
+                onClick: close,
+                children: t('batch.cancel'),
               }),
-              h('span', { className: 'dsd-rowText', key: 'text', children: t('batch.stoppingNote') }),
+              h('button', {
+                type: 'button',
+                className: 'dsd-button dsd-solid dsd-danger',
+                key: 'confirm',
+                disabled: busy || picked.size === 0,
+                onClick: () => runDelete(buildRoots()),
+                children: busy
+                  ? t('batch.deleting')
+                  : picked.size === 0
+                    ? t('batch.confirmNone')
+                    : stop
+                      ? t('batch.confirmStop', { n: picked.size })
+                      : t('batch.confirm', { n: picked.size }),
+              }),
+              h('button', {
+                type: 'button',
+                className: `dsd-button ${confirmAll ? 'dsd-solid dsd-danger' : 'dsd-outline dsd-dangerText'}`,
+                key: 'all',
+                disabled: busy || flatRows.length === 0,
+                onClick: () => {
+                  if (!confirmAll) {
+                    setConfirmAll(true)
+                    return
+                  }
+                  const roots = forest.roots.map((root) => ({
+                    sessionId: root.entry.id,
+                    descendants: descendantsOf(root).map((child) => child.entry.id),
+                  }))
+                  runDelete(roots)
+                },
+                children: confirmAll
+                  ? t('batch.confirmAll', { n: flatRows.length })
+                  : t('batch.deleteAll'),
+              }),
             ]),
-            h('button', {
-              type: 'button',
-              className: 'dsd-button dsd-outline',
-              key: 'cancel',
-              disabled: busy,
-              onClick: close,
-              children: t('batch.cancel'),
-            }),
-            h('button', {
-              type: 'button',
-              className: 'dsd-button dsd-outline dsd-dangerText',
-              key: 'confirm',
-              disabled: busy || chosenCount === 0,
-              onClick: confirm,
-              children: busy
-                ? t('batch.deleting')
-                : chosenCount === 0
-                  ? t('batch.confirmNone')
-                  : stop
-                    ? t('batch.confirmStop', { n: chosenCount })
-                    : t('batch.confirm', { n: chosenCount }),
-            }),
           ]),
         ]),
       ])
@@ -1428,6 +2214,132 @@ window.__ModuleLoader__.load({
 .dsd-wsCount{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary,#8b909a)}
 .dsd-stopRow{flex:1;min-width:0;margin-right:4px;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary,#a8adb7)}
 .dsd-stopRow .dsd-rowText{font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary,#a8adb7)}
+/* ===== 0.6.0 单会话管理面板 =====
+   Reference layout A: a wide rounded dialog, a summary card with the three-way
+   token bar, then the family tree with a folder button per row. Every colour is
+   a theme token where one exists (surface, border, label, business accent,
+   danger), so light and dark follow the Harness automatically; the three token
+   colours are fixed hues because they are a data encoding, not decoration, and
+   they are picked to stay legible on both surfaces. */
+.dsd-dialog{width:min(640px,100%);border-radius:18px;gap:14px;padding:20px 22px 18px}
+.dsd-dialogWide{width:min(700px,100%)}
+.dsd-head{display:flex;align-items:center;gap:10px}
+.dsd-headIcon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:10px;background:var(--dsw-alias-state-error-bg,rgba(229,72,77,.12));color:var(--dsw-alias-state-error-primary,#e5484d)}
+.dsd-head .dsd-title{flex:1;min-width:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsd-close{flex:none;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:none;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#a8adb7);cursor:pointer;font:inherit;font-size:20px;line-height:1}
+.dsd-close:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsd-close:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4a8cff));outline-offset:-2px}
+.dsd-card{box-sizing:border-box;display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:16px;border:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18));background:var(--dsw-alias-bg-layer-1,#f7f8fa)}
+.dsd-cardSummary{gap:12px}
+.dsd-cardHead{display:flex;align-items:center;gap:10px;min-width:0}
+.dsd-avatar{flex:none;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:var(--dsw-alias-state-business-bg,rgba(74,140,255,.12));color:var(--dsw-alias-state-business-primary,#4a8cff)}
+.dsd-cardTitle{margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;line-height:22px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsd-ghost{flex:none;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.32));border-radius:9px;background:transparent;color:var(--dsw-alias-label-primary,#e6e6e6);cursor:pointer;font:inherit;font-size:12.5px;line-height:18px;white-space:nowrap}
+.dsd-ghost:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dsd-ghost:disabled{cursor:not-allowed;opacity:.45}
+.dsd-ghostIcon{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-metrics{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:flex-start}
+.dsd-metric{display:inline-flex;align-items:center;gap:7px;min-width:0}
+.dsd-metricGlyph{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:7px;background:var(--dsw-alias-bg-layer-2,#1b1d21);color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-toneBlue{color:#3b82f6}
+.dsd-toneGreen{color:#22c55e}
+.dsd-metricBody{display:flex;flex-direction:column;min-width:0;line-height:1.25}
+.dsd-metricLabel{font-size:11.5px;color:var(--dsw-alias-label-secondary,#a8adb7);white-space:nowrap}
+.dsd-metricValue{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e6e6);white-space:nowrap;font-variant-numeric:tabular-nums}
+.dsd-bar{display:flex;gap:2px;height:10px;width:100%;border-radius:999px;overflow:hidden;background:var(--dsw-alias-bg-layer-3,rgba(127,127,127,.16))}
+.dsd-barEmpty{opacity:.6}
+.dsd-barSeg{display:block;height:100%;border-radius:999px;min-width:2px;transition:flex-grow .18s ease}
+.dsd-hit{background:#22c55e}
+.dsd-miss{background:#3b82f6}
+.dsd-out{background:#eab308}
+.dsd-legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-legendItem{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.dsd-dot{flex:none;width:8px;height:8px;border-radius:999px}
+.dsd-legendLabel{color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-legendValue{color:var(--dsw-alias-label-primary,#e6e6e6);font-variant-numeric:tabular-nums}
+.dsd-desc{font-size:12.5px;line-height:19px;color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-figures{flex:none;display:inline-flex;align-items:center;gap:8px;padding-inline-start:6px}
+.dsd-nodeTokens{font-size:12px;color:var(--dsw-alias-label-secondary,#a8adb7);font-variant-numeric:tabular-nums;white-space:nowrap}
+.dsd-nodeTime{font-size:11.5px;color:var(--dsw-alias-label-tertiary,#8b909a);font-variant-numeric:tabular-nums;white-space:nowrap}
+.dsd-folder{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,#a8adb7);cursor:pointer}
+.dsd-folder:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12));color:var(--dsw-alias-state-business-primary,#4a8cff)}
+.dsd-folder:disabled{opacity:.35;cursor:not-allowed}
+.dsd-folder:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4a8cff));outline-offset:-2px}
+.dsd-footerLeft{margin-inline-end:auto}
+.dsd-solid{border:none;background:var(--dsw-alias-state-error-primary,#e5484d);color:#fff}
+.dsd-solid:hover:not(:disabled){filter:brightness(1.06)}
+.dsd-solid.dsd-danger:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-error-primary,#e5484d));outline-offset:2px}
+/* ===== 树状层级（参考图 A 的第二版）：连接线由每一层子列表自己的左边框
+   画出，容器高度恰好等于该层子行的高度，所以竖线自然止于最后一个子行；
+   每行再用 ::before 画一段横线接到那根竖线上。层级完全来自 parentId 链，
+   子智能体的子智能体会自然再深一层。缩进与连接线都在嵌套容器上，因此行内
+   不再需要 inline padding。 */
+.dsd-tree{display:flex;flex-direction:column;gap:1px;padding:10px 12px;border-radius:14px;border:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18));background:var(--dsw-alias-bg-layer-1,#f7f8fa)}
+.dsd-children{display:flex;flex-direction:column;gap:1px;margin-inline-start:11px;padding-inline-start:15px;border-inline-start:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.22))}
+.dsd-childrenRoot{margin-inline-start:11px;padding-inline-start:15px}
+.dsd-children > .dsd-branch > .dsd-node::before{content:'';position:absolute;left:-15px;top:50%;width:15px;height:1px;background:var(--dsw-alias-border-l1,rgba(127,127,127,.22))}
+.dsd-node{min-height:24px;gap:1px}
+.dsd-nodeLabel{padding:2px 6px;gap:7px}
+.dsd-nodeMain > .dsd-nodeLabel{font-weight:600}
+.dsd-rowIcon{width:15px;height:15px}
+.dsd-rowText{font-size:12.5px;line-height:19px}
+.dsd-nodeTokens{font-size:11.5px}
+.dsd-nodeTime{font-size:11px}
+.dsd-figures{gap:7px;padding-inline-start:4px}
+.dsd-folder{width:22px;height:22px}
+.dsd-caret{width:18px;height:18px;font-size:10px}
+.dsd-check{width:13px;height:13px}
+/* 概览卡收紧：图标 12px、指标一行放下四格，卡片与对话框间距同步缩小 */
+.dsd-card{padding:12px 14px;gap:8px;border-radius:14px}
+.dsd-cardSummary{gap:10px}
+.dsd-avatar{width:30px;height:30px;border-radius:9px}
+.dsd-cardTitle{font-size:14px;line-height:20px}
+.dsd-ghost{height:28px;padding:0 9px;font-size:12px}
+.dsd-metrics{gap:6px 14px}
+.dsd-metric{gap:6px}
+.dsd-metricGlyph{width:18px;height:18px;border-radius:6px}
+.dsd-metricLabel{font-size:11px}
+.dsd-metricValue{font-size:13px}
+.dsd-bar{height:8px}
+.dsd-legend{font-size:11.5px;line-height:17px;gap:4px 14px}
+.dsd-dot{width:7px;height:7px}
+.dsd-desc{font-size:12px;line-height:18px}
+.dsd-headIcon{width:30px;height:30px;border-radius:9px}
+.dsd-dialog{gap:12px}
+.dsd-dialogBulk{width:min(780px,100%);height:min(88vh,920px)}
+.dsd-bulkTools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.dsd-input{flex:1 1 180px;min-width:150px;height:30px;padding:0 10px;box-sizing:border-box;border-radius:9px;border:.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.32));background:var(--dsw-alias-bg-layer-1,#f7f8fa);color:var(--dsw-alias-label-primary,#e6e6e6);font:inherit;font-size:12.5px}
+.dsd-input:focus{outline:none;border-color:var(--dsw-alias-state-business-primary,#4a8cff)}
+.dsd-select{height:30px;padding:0 6px;border-radius:9px;border:.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.32));background:var(--dsw-alias-bg-layer-1,#f7f8fa);color:var(--dsw-alias-label-primary,#e6e6e6);font:inherit;font-size:12.5px}
+.dsd-bulkMaster{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-bulkList{flex:1;min-height:120px;display:flex;flex-direction:column;gap:1px;overflow:auto;padding:6px;border-radius:12px;border:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18));background:var(--dsw-alias-bg-layer-1,#f7f8fa)}
+.dsd-bulkRow{display:flex;align-items:center;gap:8px;min-height:30px;padding:2px 8px;border-radius:8px}
+.dsd-bulkRow:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dsd-bulkName{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.dsd-bulkTitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--dsw-alias-label-primary,#e6e6e6)}
+.dsd-bulkOwner{font-size:10.5px;color:var(--dsw-alias-label-tertiary,#8b909a);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsd-bulkTokens{flex:none;font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary,#a8adb7);white-space:nowrap}
+.dsd-bulkTime{flex:none;width:112px;text-align:right;font-size:11px;color:var(--dsw-alias-label-tertiary,#8b909a);font-variant-numeric:tabular-nums;white-space:nowrap}
+.dsd-bulkPager{display:flex;align-items:center;justify-content:center;gap:10px;font-size:12px;color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-bulkFooter{flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding-top:8px;border-top:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18))}
+.dsd-bulkLeft{display:flex;align-items:center;gap:8px;margin-inline-end:auto}
+.dsd-bulkRight{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.dsd-bulkFooter .dsd-stopRow{flex:0 1 auto}
+.dsd-bulkStop .dsd-rowText{font-size:11.5px}
+.dsd-btnSm{height:28px;padding:0 9px;font-size:12px;line-height:18px;gap:5px}
+/* Nested tree: a deeper indent per level, a visible guide line down the left
+   of every child list, and a short connector from that line into each row. */
+/* One family per card: the block sits on its own surface, one step off the
+   dialog background, with air between blocks so two families never run
+   together. The nested guide lines live inside the card. */
+.dsd-bulkList{gap:0;padding:0 2px;border:none;background:transparent}
+.dsd-bulkBlock{padding:6px 8px 4px;border-radius:12px;border:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18));background:var(--dsw-alias-bg-layer-1,#f4f5f7);margin-bottom:10px}
+.dsd-bulkBlock:last-child{margin-bottom:0}
+.dsd-bulkBlock > .dsd-branch > .dsd-bulkRow{min-height:34px}
+.dsd-bulkBlock > .dsd-branch > .dsd-bulkRow .dsd-bulkTitle{font-weight:600}
+.dsd-bulkChildren{display:flex;flex-direction:column;gap:2px;margin-inline-start:13px;padding-inline-start:19px;border-inline-start:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.35))}
+.dsd-bulkRow{position:relative}
+.dsd-bulkChildren > .dsd-branch > .dsd-bulkRow::before{content:'';position:absolute;left:-19px;top:50%;width:19px;height:1px;background:var(--dsw-alias-border-l2,rgba(127,127,127,.35))}
 `
 
     /** Mount the plugin's stylesheet with its components. */

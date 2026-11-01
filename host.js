@@ -65,6 +65,18 @@
  */
 import { rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import {
+  addUsage,
+  clearSessionStatsCache,
+  emptyUsage,
+  hitRateOf,
+  openDirectory,
+  readSessionStatsMany,
+  resolveCacheDirectory,
+  resolveSessionDirectory,
+  sessionCacheDirectory,
+  SessionModelError,
+} from './session-model.js'
 
 /** Services activation waits for; everything else is looked up per request. */
 export const inject = ['webServer']
@@ -83,6 +95,9 @@ const DELETE_PATH = '/better-dsh-session-deletetool/delete'
 const INSPECT_PATH = '/better-dsh-session-deletetool/inspect'
 const CATALOG_PATH = '/better-dsh-session-deletetool/catalog'
 const BATCH_PATH = '/better-dsh-session-deletetool/delete-batch'
+const OPEN_DIRECTORY_PATH = '/better-dsh-session-deletetool/open-directory'
+const OPEN_CACHE_PATH = '/better-dsh-session-deletetool/open-cache'
+const REFRESH_STATS_PATH = '/better-dsh-session-deletetool/refresh-stats'
 
 /** Session ids are opaque strings, but never paths: keep them to safe segments. */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
@@ -109,6 +124,13 @@ const MAX_DESCENDANTS = 200
 
 /** How many descendants the state report lists for selection; beyond this only the count is shown. */
 const MAX_LISTED_DESCENDANTS = 300
+
+/**
+ * How many Sessions one inspect request folds usage for. Each fold reads a whole
+ * log on the first pass, and the dialog only draws what it lists; past this cap
+ * the family total is reported as incomplete rather than silently short.
+ */
+const MAX_USAGE_SESSIONS = 120
 
 /** How many roots one bulk delete request may carry before it refuses. */
 const MAX_BATCH_ROOTS = 200
@@ -156,6 +178,24 @@ export function apply(ctx) {
       send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
     })
   }
+  const onOpenDirectory = (request, response) => {
+    void serveOpenDirectory(ctx, request, response).catch((error) => {
+      ctx.logger?.warn?.(`[better-dsh-session-deletetool] route failure: ${messageOf(error)}`)
+      send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
+    })
+  }
+  const onOpenCache = (request, response) => {
+    void serveOpenCache(ctx, request, response).catch((error) => {
+      ctx.logger?.warn?.(`[better-dsh-session-deletetool] route failure: ${messageOf(error)}`)
+      send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
+    })
+  }
+  const onRefreshStats = (request, response) => {
+    void serveRefreshStats(ctx, request, response).catch((error) => {
+      ctx.logger?.warn?.(`[better-dsh-session-deletetool] route failure: ${messageOf(error)}`)
+      send(response, 500, { ok: false, code: 'internal', message: messageOf(error) })
+    })
+  }
   ctx.effect(
     () => ctx.webServer.register({ kind: 'exact', path: DELETE_PATH, handler: onDelete }),
     'better-dsh-session-deletetool: delete route',
@@ -172,7 +212,19 @@ export function apply(ctx) {
     () => ctx.webServer.register({ kind: 'exact', path: BATCH_PATH, handler: onBatch }),
     'better-dsh-session-deletetool: batch route',
   )
-  ctx.logger?.info?.(`[better-dsh-session-deletetool] routes mounted at ${DELETE_PATH}, ${INSPECT_PATH}, ${CATALOG_PATH} and ${BATCH_PATH}`)
+  ctx.effect(
+    () => ctx.webServer.register({ kind: 'exact', path: OPEN_DIRECTORY_PATH, handler: onOpenDirectory }),
+    'better-dsh-session-deletetool: open-directory route',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({ kind: 'exact', path: OPEN_CACHE_PATH, handler: onOpenCache }),
+    'better-dsh-session-deletetool: open-cache route',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({ kind: 'exact', path: REFRESH_STATS_PATH, handler: onRefreshStats }),
+    'better-dsh-session-deletetool: refresh-stats route',
+  )
+  ctx.logger?.info?.(`[better-dsh-session-deletetool] routes mounted at ${DELETE_PATH}, ${INSPECT_PATH}, ${CATALOG_PATH}, ${BATCH_PATH}, ${OPEN_DIRECTORY_PATH}, ${OPEN_CACHE_PATH} and ${REFRESH_STATS_PATH}`)
 }
 
 /**
@@ -313,11 +365,14 @@ async function serveBatch(ctx, request, response) {
   }
 
   const stop = body?.stop === true
+  // Cache clearing is a separate choice: deleting a Session never implies
+  // wiping its projection cache unless the caller asked for it.
+  const cleanCache = body?.cleanCache !== false
   const removed = []
   const failed = []
   for (const root of roots) {
     try {
-      removed.push(await deleteSession(ctx, root.sessionId, { stop, descendants: root.descendants }))
+      removed.push(await deleteSession(ctx, root.sessionId, { stop, descendants: root.descendants, cleanCache }))
     } catch (error) {
       const refusal = error instanceof DeleteRefusal
         ? error
@@ -332,6 +387,128 @@ async function serveBatch(ctx, request, response) {
     removed,
     failed,
   })
+}
+
+/**
+ * Open one Session's local directory in the platform file manager.
+ *
+ * The request names a Session, never a path: the directory is resolved here
+ * through the persistence backend's own `locate(header)` and validated before
+ * the launcher is started, so a crafted body cannot open an arbitrary folder.
+ * @param {object} ctx - Host Cordis context.
+ * @param {import('node:http').IncomingMessage} request - the request.
+ * @param {import('node:http').ServerResponse} response - the response.
+ */
+async function serveOpenDirectory(ctx, request, response) {
+  if (request.method !== 'POST') {
+    send(response, 405, { ok: false, code: 'method-not-allowed', message: 'only POST is accepted' })
+    return
+  }
+  if (!sameOrigin(request)) {
+    send(response, 403, { ok: false, code: 'untrusted-origin', message: 'the request did not come from this Harness page' })
+    return
+  }
+  let body
+  try {
+    body = JSON.parse(await readBody(request))
+  } catch (error) {
+    send(response, 400, { ok: false, code: 'bad-request', message: messageOf(error) })
+    return
+  }
+  const sessionId = typeof body?.sessionId === 'string' ? body.sessionId.trim() : ''
+  if (!SESSION_ID.test(sessionId)) {
+    send(response, 400, { ok: false, code: 'bad-request', message: 'sessionId is missing or malformed' })
+    return
+  }
+
+  const persistence = ctx.get('sessionPersistence')
+  if (persistence === undefined || typeof persistence.stat !== 'function') {
+    send(response, 503, { ok: false, code: 'persistence-unavailable', message: 'sessionPersistence is not mounted in this profile' })
+    return
+  }
+  const snapshot = await persistence.stat(sessionId)
+  const header = snapshot?.header
+  if (header === undefined) {
+    send(response, 404, { ok: false, code: 'session-not-found', message: `找不到会话 ${sessionId} 的持久化记录。` })
+    return
+  }
+
+  const directory = await resolveSessionDirectory(ctx, header)
+  if (!directory.available) {
+    send(response, 409, { ok: false, code: 'directory-unavailable', message: directory.reason ?? '这个会话没有可打开的本地目录。' })
+    return
+  }
+
+  try {
+    await openDirectory(directory.path)
+  } catch (error) {
+    send(response, 502, {
+      ok: false,
+      code: error instanceof SessionModelError ? error.code : 'open-failed',
+      message: messageOf(error),
+    })
+    return
+  }
+  send(response, 200, { ok: true, sessionId, path: directory.path })
+}
+
+/**
+ * Open DSH's projection-cache directory in the file manager.
+ *
+ * This is the folder where DSH keeps its own per-Session fold cache; the plugin
+ * writes nothing there, it only lets the user look at it or clear it by hand.
+ * @param {object} ctx - Host Cordis context.
+ * @param {import("node:http").IncomingMessage} request - the request.
+ * @param {import("node:http").ServerResponse} response - the response.
+ */
+async function serveOpenCache(ctx, request, response) {
+  if (request.method !== 'POST') {
+    send(response, 405, { ok: false, code: 'method-not-allowed', message: 'only POST is accepted' })
+    return
+  }
+  if (!sameOrigin(request)) {
+    send(response, 403, { ok: false, code: 'untrusted-origin', message: 'the request did not come from this Harness page' })
+    return
+  }
+  const directory = await resolveCacheDirectory()
+  if (!directory.available) {
+    send(response, 409, { ok: false, code: 'cache-unavailable', message: directory.reason ?? '缓存目录不存在。' })
+    return
+  }
+  try {
+    await openDirectory(directory.path)
+  } catch (error) {
+    send(response, 502, {
+      ok: false,
+      code: error instanceof SessionModelError ? error.code : 'open-failed',
+      message: messageOf(error),
+    })
+    return
+  }
+  send(response, 200, { ok: true, path: directory.path })
+}
+
+/**
+ * Drop every cached usage fold so the next catalog read re-reads the logs.
+ *
+ * The cache is invalidated by each log file's size and mtime on its own; this
+ * route is for the case those signatures cannot see, such as a log rewritten
+ * with the same length, and for a reader who simply wants a fresh number.
+ * @param {object} ctx - Host Cordis context.
+ * @param {import("node:http").IncomingMessage} request - the request.
+ * @param {import("node:http").ServerResponse} response - the response.
+ */
+async function serveRefreshStats(ctx, request, response) {
+  if (request.method !== 'POST') {
+    send(response, 405, { ok: false, code: 'method-not-allowed', message: 'only POST is accepted' })
+    return
+  }
+  if (!sameOrigin(request)) {
+    send(response, 403, { ok: false, code: 'untrusted-origin', message: 'the request did not come from this Harness page' })
+    return
+  }
+  clearSessionStatsCache()
+  send(response, 200, { ok: true })
 }
 
 /**
@@ -392,6 +569,14 @@ async function buildCatalog(ctx) {
   }
   await attachTitles(ctx, headers)
 
+  // One fold per Session for the whole corpus. Each Session's own usage is
+  // counted once here, so the corpus total cannot double-count a family.
+  const corpusIds = headers.map((header) => header.id)
+  const stats = await readSessionStatsMany(ctx, corpusIds)
+  const directories = await resolveDirectories(ctx, corpusIds)
+  const familyUsage = familyUsageIndex(headers, stats)
+  const corpus = summarizeCorpus(headers, stats)
+
   const registry = ctx.get('workspaceRegistry')
   const workspaces = registry !== undefined && typeof registry.list === 'function' ? registry.list() : []
   const rank = new Map()
@@ -428,7 +613,7 @@ async function buildCatalog(ctx) {
       workspaceId: group.workspace === undefined ? null : String(group.workspace.id),
       title: group.workspace === undefined ? workspaceLabel(group.cwd) : String(group.workspace.title ?? ''),
       path: group.workspace === undefined ? String(group.cwd ?? '') : String(group.workspace.path ?? ''),
-      sessions: await catalogSessions(ctx, group.members),
+      sessions: await catalogSessions(ctx, group.members, stats, directories, familyUsage),
     })
   }
   sections.sort((left, right) => sectionRank(rank, left) - sectionRank(rank, right) || left.title.localeCompare(right.title))
@@ -440,7 +625,7 @@ async function buildCatalog(ctx) {
       workspaceId: null,
       title: '未归类',
       path: '',
-      sessions: await catalogSessions(ctx, ungrouped.members),
+      sessions: await catalogSessions(ctx, ungrouped.members, stats, directories, familyUsage),
     })
   }
 
@@ -451,6 +636,18 @@ async function buildCatalog(ctx) {
       workspaces: sections.length,
       sessions: headers.length,
       ungrouped: ungrouped === undefined ? 0 : ungrouped.members.length,
+    },
+    // The corpus card: Session count and the sum of every Session's own
+    // requests. Family totals are shown per row, never added here, so a
+    // fork and its parent cannot be counted twice.
+    summary: {
+      sessions: corpus.sessions,
+      tokens: corpus.usage.totalTokens,
+      hitRate: corpus.hitRate,
+      cacheReadInputTokens: corpus.usage.cacheReadInputTokens,
+      cacheMissInputTokens: corpus.usage.cacheMissInputTokens,
+      cacheWriteTokens: corpus.usage.cacheWriteTokens,
+      outputTokens: corpus.usage.outputTokens,
     },
   }
 }
@@ -467,7 +664,67 @@ function sectionRank(rank, section) {
  * @param {object[]} members - the group's headers.
  * @returns {Promise<object[]>} the rows, parents before their children.
  */
-async function catalogSessions(ctx, members) {
+/**
+ * Every Session's family usage: its own requests plus every descendant's own,
+ * keyed by Session id. The walk follows `parentSession` across the whole corpus
+ * and memoises each subtree, so a deep family is folded once.
+ * @param {object[]} headers - every stored Session header.
+ * @param {Map<string, object>} stats - id → folded statistics.
+ * @returns {Map<string, object>} id → summed usage.
+ */
+function familyUsageIndex(headers, stats) {
+  const byParent = new Map()
+  for (const header of headers) {
+    const parent = typeof header.parentSession === 'string' ? header.parentSession : undefined
+    if (parent === undefined || parent === header.id) continue
+    if (!byParent.has(parent)) byParent.set(parent, [])
+    byParent.get(parent).push(header.id)
+  }
+  const memo = new Map()
+  const walk = (id, guard) => {
+    if (memo.has(id)) return memo.get(id)
+    const usage = emptyUsage()
+    const own = stats.get(id)
+    if (own !== undefined && own.ok !== false) addUsage(usage, own.usage)
+    if (!guard.has(id)) {
+      guard.add(id)
+      for (const child of byParent.get(id) ?? []) addUsage(usage, walk(child, guard))
+    }
+    memo.set(id, usage)
+    return usage
+  }
+  const result = new Map()
+  for (const header of headers) result.set(header.id, walk(header.id, new Set()))
+  return result
+}
+
+/**
+ * The corpus total: every Session's own usage, each counted exactly once.
+ * A parent's family total is deliberately not summed here — it already contains
+ * its children, and adding both would count the same requests twice.
+ * @param {object[]} headers - every stored Session header.
+ * @param {Map<string, object>} stats - id → folded statistics.
+ * @returns {{ sessions: number, usage: object, hitRate: number }}
+ */
+function summarizeCorpus(headers, stats) {
+  const usage = emptyUsage()
+  for (const header of headers) {
+    const entry = stats.get(header.id)
+    if (entry !== undefined && entry.ok !== false) addUsage(usage, entry.usage)
+  }
+  return { sessions: headers.length, usage, hitRate: hitRateOf(usage) }
+}
+
+/**
+ * One group's rows: lineage depth, parent/child flags and family counts.
+ * @param {object} ctx - Host Cordis context.
+ * @param {object[]} members - the group's headers.
+ * @param {Map<string, object>} stats - id → folded statistics.
+ * @param {Map<string, object>} directories - id → resolved directory.
+ * @param {Map<string, object>} familyUsage - id → recursive usage.
+ * @returns {Promise<object[]>} the rows, parents before their children.
+ */
+async function catalogSessions(ctx, members, stats, directories, familyUsage) {
   const inGroup = new Set(members.map((header) => header.id))
   const childrenOf = new Map()
   for (const header of members) {
@@ -494,7 +751,9 @@ async function catalogSessions(ctx, members) {
 
   const rows = []
   for (const header of members) {
-    const parent = typeof header.parentSession === 'string' && inGroup.has(header.parentSession) && header.parentSession !== header.id
+    // The parent may live in another group: the grouping is display-only, the
+    // lineage is a fact of the Session, so it is never dropped here.
+    const parent = typeof header.parentSession === 'string' && header.parentSession !== header.id
       ? header.parentSession
       : undefined
     const children = childrenOf.get(header.id) ?? []
@@ -523,6 +782,11 @@ async function catalogSessions(ctx, members) {
       ...(typeof header.agentPreset === 'string' && header.agentPreset !== '' ? { agentPreset: header.agentPreset } : {}),
       ...runtime,
       activity,
+      usage: usagePayload(stats?.get(header.id)),
+      directory: directories?.get(header.id) ?? { path: null, available: false, reason: '读不到这个会话的目录。' },
+      ...(familyUsage?.has(header.id)
+        ? { familyUsage: usagePayload({ usage: familyUsage.get(header.id), complete: true, lastActivityAt: null }) }
+        : {}),
     })
   }
 
@@ -643,12 +907,12 @@ async function deleteSession(ctx, sessionId, options) {
   // no child outlives its parent by more than one call.
   const removedDescendants = []
   for (const child of selected) {
-    const report = await removeSession(ctx, child.id)
+    const report = await removeSession(ctx, child.id, { dropCache: options.cleanCache !== false })
     report.kind = child.kind
     removedDescendants.push(report)
   }
 
-  const removed = await removeSession(ctx, sessionId, { artifactDirectory })
+  const removed = await removeSession(ctx, sessionId, { artifactDirectory, dropCache: options.cleanCache !== false })
 
   return {
     ok: true,
@@ -706,8 +970,13 @@ async function removeSession(ctx, sessionId, known = {}) {
   await detachFromWorkspaces(ctx, sessionId, report)
 
   // The projection checkpoint is a fold shortcut and disposable; leaving it
-  // would keep a record for a Session that no longer exists.
-  report.projectionCheckpoint = await dropProjectionCheckpoint(ctx, sessionId, report)
+  // would keep a record for a Session that no longer exists. A caller that
+  // asked to keep the cache skips this, so the two choices stay separate.
+  if (known.dropCache !== false) {
+    report.projectionCheckpoint = await dropProjectionCheckpoint(ctx, sessionId, report)
+  } else {
+    report.cacheKept = true
+  }
 
   // Connected Clients drop the row from their session list, exactly as they do
   // when the Session controller reports a disposed Session.
@@ -1102,6 +1371,15 @@ async function inspectSession(ctx, sessionId) {
   // costs one admission walk, and beyond the listing nothing can be selected.
   const busy = await gatherActivities(ctx, [sessionId, ...listed.map((entry) => entry.id)])
   const subagents = descendants.filter((entry) => entry.kind === DESCENDANT_KINDS.subagent).length
+  // Usage and directories are read once for the whole family, here in the Host,
+  // so the dialog never touches a log or a path: `stats` carries one folded usage
+  // per Session (own requests only), `directories` one resolved path per Session.
+  const foldedRows = listed.slice(0, MAX_USAGE_SESSIONS)
+  const familyIds = [sessionId, ...foldedRows.map((entry) => entry.id)]
+  const stats = await readSessionStatsMany(ctx, familyIds)
+  const directories = await resolveDirectories(ctx, familyIds)
+  const familyUsage = foldFamilyUsage(foldedRows, sessionId, stats)
+  const familyComplete = listed.length <= MAX_USAGE_SESSIONS
   return {
     ok: true,
     sessionId,
@@ -1110,6 +1388,16 @@ async function inspectSession(ctx, sessionId) {
     ...runtimeOf(ctx, sessionId),
     activity: busy.get(sessionId) ?? [],
     warnings,
+    usage: {
+      self: usagePayload(stats.get(sessionId)),
+      family: usagePayload({
+        usage: familyUsage,
+        complete: familyComplete,
+        note: familyComplete ? null : `只统计了前 ${MAX_USAGE_SESSIONS} 个会话，其余未计入。`,
+        lastActivityAt: null,
+      }),
+    },
+    directory: directories.get(sessionId) ?? { path: null, available: false, reason: '读不到这个会话的目录。' },
     descendants: {
       count: descendants.length,
       subagents,
@@ -1124,8 +1412,94 @@ async function inspectSession(ctx, sessionId) {
         ...(entry.title === undefined ? {} : { title: entry.title }),
         ...runtimeOf(ctx, entry.id),
         activity: busy.get(entry.id) ?? [],
+        usage: usagePayload(stats.get(entry.id)),
+        directory: directories.get(entry.id) ?? { path: null, available: false, reason: '读不到这个会话的目录。' },
       })),
     },
+  }
+}
+
+/**
+ * Resolve every listed Session's artifact directory, bounded to the listed ids.
+ * @param {object} ctx - Host Cordis context.
+ * @param {string[]} ids - the Sessions to locate.
+ * @returns {Promise<Map<string, { path: string|null, available: boolean, reason: string|null }>>}
+ */
+async function resolveDirectories(ctx, ids) {
+  const persistence = ctx.get('sessionPersistence')
+  const directories = new Map()
+  await Promise.all(ids.map(async (id) => {
+    if (persistence === undefined || typeof persistence.stat !== 'function') {
+      directories.set(id, { path: null, available: false, reason: '当前持久化后端不提供会话目录。' })
+      return
+    }
+    try {
+      const snapshot = await persistence.stat(id)
+      const header = snapshot?.header
+      if (header === undefined) {
+        directories.set(id, { path: null, available: false, reason: '这个会话没有持久化记录，没有本地目录。' })
+        return
+      }
+      directories.set(id, await resolveSessionDirectory(ctx, header))
+    } catch (error) {
+      directories.set(id, { path: null, available: false, reason: `读不到目录：${messageOf(error)}` })
+    }
+  }))
+  return directories
+}
+
+/**
+ * Recursive family usage: the root's own requests plus every descendant's own.
+ *
+ * The tree comes from the same listed rows the dialog draws (`parentId`), so a
+ * descendant that was not listed cannot be counted here either; a row whose
+ * parent is absent is treated as a child of the root, which is how the dialog
+ * draws it.
+ * @param {Array<object>} rows - the listed descendant rows.
+ * @param {string} rootId - the dialog's Session.
+ * @param {Map<string, object>} stats - id → folded statistics.
+ * @returns {object} the summed usage.
+ */
+function foldFamilyUsage(rows, rootId, stats) {
+  const childrenOf = new Map()
+  const listed = new Set(rows.map((row) => row.id))
+  for (const row of rows) {
+    const parent = typeof row.parentId === 'string' && listed.has(row.parentId) ? row.parentId : rootId
+    if (!childrenOf.has(parent)) childrenOf.set(parent, [])
+    childrenOf.get(parent).push(row.id)
+  }
+  const walk = (id, guard) => {
+    const usage = emptyUsage()
+    const own = stats.get(id)
+    if (own !== undefined && own.ok !== false) addUsage(usage, own.usage)
+    if (guard.has(id)) return usage
+    guard.add(id)
+    for (const child of childrenOf.get(id) ?? []) addUsage(usage, walk(child, guard))
+    return usage
+  }
+  return walk(rootId, new Set())
+}
+
+/**
+ * One Session's usage, in the shape the Client renders: the four token buckets,
+ * the hit rate, whether the fold was complete, and its last activity time.
+ * @param {object|undefined} entry - a folded statistics entry.
+ * @returns {object} the payload.
+ */
+function usagePayload(entry) {
+  const usage = entry?.usage ?? emptyUsage()
+  return {
+    cacheReadInputTokens: usage.cacheReadInputTokens,
+    cacheMissInputTokens: usage.cacheMissInputTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+    requestCount: usage.requestCount,
+    hitRate: hitRateOf(usage),
+    complete: entry?.complete !== false,
+    ...(typeof entry?.note === 'string' && entry.note !== '' ? { note: entry.note } : {}),
+    lastActivityAt: typeof entry?.lastActivityAt === 'number' ? entry.lastActivityAt : null,
+    inheritedEventCount: typeof entry?.inheritedEventCount === 'number' ? entry.inheritedEventCount : 0,
   }
 }
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0
+
+**From a delete tool to a conversation manager.** The single-conversation dialog grew a usage
+card and a real family tree, and the bulk entry became a management surface of its own.
+
+- **Usage per conversation.** Each `assistant/message` event carries
+  `{ inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens }`; the Host folds them per
+  Session into cache-hit input, cache-miss input and output, plus a hit rate over the prompt. A
+  parent row shows `own/family`; every other row shows its own cost alone. The corpus card sums
+  each Session's own usage once, so a fork and its parent are never counted twice.
+- **Fork-aware counting.** A forked Session's inherited log prefix is skipped
+  (`inheritedEventCount`) and requests are de-duplicated by message id.
+- **The family tree nests by `parentSession` alone**, across Workspace groups: a subagent hangs
+  under the Session that spawned it, and a subagent that spawned its own subagent sits one level
+  deeper. The old grouping blocks (subagents / forked conversations) are gone.
+- **Folders.** Every row carries a folder button. The Host resolves the path through
+  `sessionPersistence.locate`, and the open route takes a Session id, never a path.
+- **Bulk management.** One card per family, search, sort by last activity / tokens / hit rate,
+  filters by kind and Workspace, paging, per-page select, delete selected, and delete all behind a
+  second confirmation.
+- **Cache controls.** Open DSH's projection-cache folder, refresh the plugin's usage folds, and
+  choose separately whether a delete also clears the projection-cache record.
+- **New routes:** `open-directory`, `open-cache`, `refresh-stats`; `delete-batch` now takes
+  `cleanCache`. Every route keeps the loopback + same-origin gate.
+
+The checkbox on a conversation that has no children now reads as ticked: it covers nothing but
+itself, and it is deleted with the row.
+
 ## 0.5.3
 
 **Both delete glyphs now match the row they sit in, and stay crisp on scaled screens.** The bulk
