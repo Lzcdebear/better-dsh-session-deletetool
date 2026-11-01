@@ -290,7 +290,7 @@ async function serveInspect(ctx, request, response) {
     return
   }
   try {
-    send(response, 200, await inspectSession(ctx, sessionId))
+    send(response, 200, await inspectSession(ctx, sessionId, { usage: wantsUsage(request) }))
   } catch (error) {
     answer(ctx, response, error, sessionId)
   }
@@ -313,7 +313,7 @@ async function serveCatalog(ctx, request, response) {
     return
   }
   try {
-    send(response, 200, await buildCatalog(ctx))
+    send(response, 200, await buildCatalog(ctx, { usage: wantsUsage(request) }))
   } catch (error) {
     answer(ctx, response, error, 'catalog')
   }
@@ -540,6 +540,24 @@ function normalizeRoots(value) {
 }
 
 /**
+ * Whether the caller wants token usage.
+ *
+ * `usage=0` means the Host must not fold any log at all: the answer carries a
+ * `usage: { disabled: true }` marker instead of numbers, and no session log is
+ * read for the request.
+ * @param {import("node:http").IncomingMessage} request - the request.
+ * @returns {boolean} whether usage was asked for.
+ */
+function wantsUsage(request) {
+  try {
+    const value = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.get('usage')
+    return value !== '0' && value !== 'false'
+  } catch {
+    return true
+  }
+}
+
+/**
  * Build the bulk view: every known Session, grouped by its owning Workspace.
  *
  * Grouping follows the sidebar. A Session belongs to the Workspace whose
@@ -556,7 +574,7 @@ function normalizeRoots(value) {
  * @param {object} ctx - Host Cordis context.
  * @returns {Promise<object>} `{ ok, workspaces, totals }`.
  */
-async function buildCatalog(ctx) {
+async function buildCatalog(ctx, options = {}) {
   const query = ctx.get('sessionQuery')
   if (query === undefined || typeof query.listSessions !== 'function') {
     throw new DeleteRefusal(503, 'query-unavailable', 'sessionQuery is not mounted in this profile')
@@ -571,11 +589,13 @@ async function buildCatalog(ctx) {
 
   // One fold per Session for the whole corpus. Each Session's own usage is
   // counted once here, so the corpus total cannot double-count a family.
+  const withUsage = options.usage !== false
   const corpusIds = headers.map((header) => header.id)
-  const stats = await readSessionStatsMany(ctx, corpusIds)
+  const stats = withUsage ? await readSessionStatsMany(ctx, corpusIds) : null
   const directories = await resolveDirectories(ctx, corpusIds)
-  const familyUsage = familyUsageIndex(headers, stats)
-  const corpus = summarizeCorpus(headers, stats)
+  const stored = await storedFlags(ctx, corpusIds)
+  const familyUsage = withUsage ? familyUsageIndex(headers, stats) : null
+  const corpus = withUsage ? summarizeCorpus(headers, stats) : null
 
   const registry = ctx.get('workspaceRegistry')
   const workspaces = registry !== undefined && typeof registry.list === 'function' ? registry.list() : []
@@ -613,7 +633,7 @@ async function buildCatalog(ctx) {
       workspaceId: group.workspace === undefined ? null : String(group.workspace.id),
       title: group.workspace === undefined ? workspaceLabel(group.cwd) : String(group.workspace.title ?? ''),
       path: group.workspace === undefined ? String(group.cwd ?? '') : String(group.workspace.path ?? ''),
-      sessions: await catalogSessions(ctx, group.members, stats, directories, familyUsage),
+      sessions: await catalogSessions(ctx, group.members, stats, directories, familyUsage, stored, withUsage),
     })
   }
   sections.sort((left, right) => sectionRank(rank, left) - sectionRank(rank, right) || left.title.localeCompare(right.title))
@@ -625,7 +645,7 @@ async function buildCatalog(ctx) {
       workspaceId: null,
       title: '未归类',
       path: '',
-      sessions: await catalogSessions(ctx, ungrouped.members, stats, directories, familyUsage),
+      sessions: await catalogSessions(ctx, ungrouped.members, stats, directories, familyUsage, stored, withUsage),
     })
   }
 
@@ -640,14 +660,21 @@ async function buildCatalog(ctx) {
     // The corpus card: Session count and the sum of every Session's own
     // requests. Family totals are shown per row, never added here, so a
     // fork and its parent cannot be counted twice.
-    summary: {
+    summary: withUsage ? {
       sessions: corpus.sessions,
+      // Rows whose record is gone: listed so the user can see why they cannot
+      // be deleted, and counted so the card does not look broken.
+      stale: headers.filter((header) => stored.get(header.id) === false).length,
       tokens: corpus.usage.totalTokens,
       hitRate: corpus.hitRate,
       cacheReadInputTokens: corpus.usage.cacheReadInputTokens,
       cacheMissInputTokens: corpus.usage.cacheMissInputTokens,
       cacheWriteTokens: corpus.usage.cacheWriteTokens,
       outputTokens: corpus.usage.outputTokens,
+    } : {
+      sessions: headers.length,
+      stale: headers.filter((header) => stored.get(header.id) === false).length,
+      usageDisabled: true,
     },
   }
 }
@@ -665,7 +692,32 @@ function sectionRank(rank, section) {
  * @returns {Promise<object[]>} the rows, parents before their children.
  */
 /**
- * Every Session's family usage: its own requests plus every descendant's own,
+ * Which Sessions still have a persisted record.
+ *
+ * The catalog is built from headers alone, and a header can outlive its log:
+ * a directory removed by hand, a Workspace list restored from another machine.
+ * Asking the persistence backend per id separates those rows from real ones,
+ * so the Client can disable them instead of offering a delete that must fail.
+ * @param {object} ctx - Host Cordis context.
+ * @param {string[]} ids - the Sessions to check.
+ * @returns {Promise<Map<string, boolean>>} id → whether a record exists.
+ */
+async function storedFlags(ctx, ids) {
+  const persistence = ctx.get('sessionPersistence')
+  const flags = new Map()
+  if (persistence === undefined || typeof persistence.stat !== 'function') return flags
+  await Promise.all(ids.map(async (id) => {
+    try {
+      const snapshot = await persistence.stat(id)
+      flags.set(id, snapshot?.header !== undefined)
+    } catch {
+      flags.set(id, false)
+    }
+  }))
+  return flags
+}
+
+/** * Every Session's family usage: its own requests plus every descendant's own,
  * keyed by Session id. The walk follows `parentSession` across the whole corpus
  * and memoises each subtree, so a deep family is folded once.
  * @param {object[]} headers - every stored Session header.
@@ -724,7 +776,7 @@ function summarizeCorpus(headers, stats) {
  * @param {Map<string, object>} familyUsage - id → recursive usage.
  * @returns {Promise<object[]>} the rows, parents before their children.
  */
-async function catalogSessions(ctx, members, stats, directories, familyUsage) {
+async function catalogSessions(ctx, members, stats, directories, familyUsage, stored, withUsage = true) {
   const inGroup = new Set(members.map((header) => header.id))
   const childrenOf = new Map()
   for (const header of members) {
@@ -782,9 +834,10 @@ async function catalogSessions(ctx, members, stats, directories, familyUsage) {
       ...(typeof header.agentPreset === 'string' && header.agentPreset !== '' ? { agentPreset: header.agentPreset } : {}),
       ...runtime,
       activity,
-      usage: usagePayload(stats?.get(header.id)),
+      usage: withUsage ? usagePayload(stats?.get(header.id)) : { disabled: true },
+      ...(stored !== undefined && stored.get(header.id) === false ? { stale: true } : {}),
       directory: directories?.get(header.id) ?? { path: null, available: false, reason: '读不到这个会话的目录。' },
-      ...(familyUsage?.has(header.id)
+      ...(withUsage && familyUsage?.has(header.id)
         ? { familyUsage: usagePayload({ usage: familyUsage.get(header.id), complete: true, lastActivityAt: null }) }
         : {}),
     })
@@ -1355,7 +1408,7 @@ async function attachTitles(ctx, entries) {
  * @param {string} sessionId - the Session to inspect.
  * @returns {Promise<object>} the state the Client dialog reports.
  */
-async function inspectSession(ctx, sessionId) {
+async function inspectSession(ctx, sessionId, options = {}) {
   const persistence = ctx.get('sessionPersistence')
   const snapshot = persistence === undefined || typeof persistence.stat !== 'function'
     ? undefined
@@ -1374,11 +1427,12 @@ async function inspectSession(ctx, sessionId) {
   // Usage and directories are read once for the whole family, here in the Host,
   // so the dialog never touches a log or a path: `stats` carries one folded usage
   // per Session (own requests only), `directories` one resolved path per Session.
+  const withUsage = options.usage !== false
   const foldedRows = listed.slice(0, MAX_USAGE_SESSIONS)
   const familyIds = [sessionId, ...foldedRows.map((entry) => entry.id)]
-  const stats = await readSessionStatsMany(ctx, familyIds)
+  const stats = withUsage ? await readSessionStatsMany(ctx, familyIds) : null
   const directories = await resolveDirectories(ctx, familyIds)
-  const familyUsage = foldFamilyUsage(foldedRows, sessionId, stats)
+  const familyUsage = withUsage ? foldFamilyUsage(foldedRows, sessionId, stats) : null
   const familyComplete = listed.length <= MAX_USAGE_SESSIONS
   return {
     ok: true,
@@ -1388,7 +1442,7 @@ async function inspectSession(ctx, sessionId) {
     ...runtimeOf(ctx, sessionId),
     activity: busy.get(sessionId) ?? [],
     warnings,
-    usage: {
+    usage: withUsage ? {
       self: usagePayload(stats.get(sessionId)),
       family: usagePayload({
         usage: familyUsage,
@@ -1396,7 +1450,7 @@ async function inspectSession(ctx, sessionId) {
         note: familyComplete ? null : `只统计了前 ${MAX_USAGE_SESSIONS} 个会话，其余未计入。`,
         lastActivityAt: null,
       }),
-    },
+    } : { disabled: true },
     directory: directories.get(sessionId) ?? { path: null, available: false, reason: '读不到这个会话的目录。' },
     descendants: {
       count: descendants.length,
@@ -1412,7 +1466,7 @@ async function inspectSession(ctx, sessionId) {
         ...(entry.title === undefined ? {} : { title: entry.title }),
         ...runtimeOf(ctx, entry.id),
         activity: busy.get(entry.id) ?? [],
-        usage: usagePayload(stats.get(entry.id)),
+        usage: withUsage ? usagePayload(stats.get(entry.id)) : { disabled: true },
         directory: directories.get(entry.id) ?? { path: null, available: false, reason: '读不到这个会话的目录。' },
       })),
     },

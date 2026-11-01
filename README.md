@@ -28,7 +28,8 @@ decide what to remove.
 - **Bulk management.** One card per family with search, sort by last activity / tokens / hit rate,
   filters by kind and Workspace, paging, per-page select, delete selected, and delete all behind a
   second confirmation.
-- **Cache controls.** Open DSH's projection-cache folder, or refresh the plugin's own usage cache.
+- **Cache controls.** Open DSH's projection-cache folder, and read what that folder is under the action bar.
+- **Usage switch.** Turn usage off and the Host stops reading session logs entirely; token and cache figures read “Off”.
 
 ## Install
 
@@ -102,6 +103,13 @@ Styles use host theme tokens (`--dsw-alias-*`) only, so light and dark both read
 ```sh
 node --test test/host.test.mjs
 ```
+
+## Thanks
+
+Issues and reports that shaped this version:
+
+- [@rowan-firm](https://github.com/rowan-firm)
+- [@Wolf-Keys](https://github.com/Wolf-Keys)
 
 ## License
 

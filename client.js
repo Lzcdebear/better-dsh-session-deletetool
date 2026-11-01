@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     const BATCH_PATH = '/better-dsh-session-deletetool/delete-batch'
     const OPEN_DIRECTORY_PATH = '/better-dsh-session-deletetool/open-directory'
     const OPEN_CACHE_PATH = '/better-dsh-session-deletetool/open-cache'
-    const REFRESH_STATS_PATH = '/better-dsh-session-deletetool/refresh-stats'
+
 
     const DICT = {
       zh: {
@@ -84,6 +84,15 @@ window.__ModuleLoader__.load({
         'batch.refresh': '刷新缓存',
         'batch.cleanCache': '同时清理投影缓存',
         'batch.deleteAll': '删除全部会话',
+        'batch.deleteFailed': '删除失败',
+        'batch.stale': '记录已不存在，无法删除',
+        'batch.staleHint': '这个会话的日志已经不在磁盘上，删除会失败；要让它从列表消失，请从侧栏移除。',
+        'batch.allFailed': '{n} 个会话删除失败（{codes}）',
+        'batch.staleCount': '其中 {n} 个会话只剩列表记录，日志已不在磁盘上，无法删除。',
+        'usage.toggle': '显示用量',
+        'usage.off': '已关闭',
+        'usage.offHint': '用量统计已关闭，不再读取会话日志。',
+        'usage.cacheNote': '会话缓存：DSH 为每个会话保存的解析结果（在 DSH 数据目录的 storages/session_projcache 下），用来避免每次重放日志。删除会话时只清理该会话对应的缓存记录，不影响其他会话。',
         'batch.confirmAll': '确认删除全部 {n} 个？',
         'batch.rowOwn': '本会话自身',
         'batch.rowFamily': '会话家族',
@@ -189,6 +198,15 @@ window.__ModuleLoader__.load({
         'batch.refresh': 'Refresh cache',
         'batch.cleanCache': 'Also clear projection cache',
         'batch.deleteAll': 'Delete every conversation',
+        'batch.deleteFailed': 'Delete failed',
+        'batch.stale': 'Record is gone; cannot delete',
+        'batch.staleHint': 'This conversation has no log left on disk, so deleting it would fail; remove it from the sidebar instead.',
+        'batch.allFailed': '{n} conversation(s) failed ({codes})',
+        'batch.staleCount': '{n} of them have no log left on disk and cannot be deleted.',
+        'usage.toggle': 'Show usage',
+        'usage.off': 'Off',
+        'usage.offHint': 'Usage is off; session logs are not read.',
+        'usage.cacheNote': 'Session cache: the parsed result DSH keeps per conversation (under storages/session_projcache in the DSH data directory), so logs are not replayed every time. Deleting a conversation removes only its own cache record.',
         'batch.confirmAll': 'Confirm deleting all {n}?',
         'batch.rowOwn': 'This conversation',
         'batch.rowFamily': 'Whole family',
@@ -255,7 +273,11 @@ window.__ModuleLoader__.load({
       return text.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match))
     }
 
-    /** Translate through the registered locale when there is one, else the zh table. */
+    /**
+     * Translate through the registered locale when there is one. The fallback
+     * is English, the package's primary copy: if the locale service never
+     * arrives, a reader who does not read Chinese must not get Chinese.
+     */
     let translate = null
     function t(key, params) {
       if (translate !== null) {
@@ -266,7 +288,7 @@ window.__ModuleLoader__.load({
           // A missing key falls through to the local table below.
         }
       }
-      const fallback = DICT.zh[key]
+      const fallback = DICT.en[key] ?? DICT.zh[key]
       return typeof fallback === 'string' ? interpolate(fallback, params) : key
     }
 
@@ -305,17 +327,76 @@ window.__ModuleLoader__.load({
       for (const listener of [...bulkListeners]) listener()
     }
 
+    // ---- whether usage is read at all ----------------------------------
+    // Off means the Host never folds a log: the requests carry `usage=0`, and
+    // the answers come back with `usage: { disabled: true }`.
+    const USAGE_KEY = 'better-dsh-session-deletetool:usage'
+    function readUsageEnabled() {
+      try {
+        return window.localStorage.getItem(USAGE_KEY) !== '0'
+      } catch {
+        return true
+      }
+    }
+    let usageEnabled = readUsageEnabled()
+    const usageListeners = new Set()
+    function subscribeUsage(listener) {
+      usageListeners.add(listener)
+      return () => usageListeners.delete(listener)
+    }
+    function getUsageEnabled() {
+      return usageEnabled
+    }
+    function setUsageEnabled(next) {
+      if (usageEnabled === next) return
+      usageEnabled = next
+      try {
+        window.localStorage.setItem(USAGE_KEY, next ? '1' : '0')
+      } catch {
+        // A storage-less shell still honours the switch for this page.
+      }
+      for (const listener of [...usageListeners]) listener()
+    }
+
     /** One failed Host answer, carrying its stable code and details. */
     function failureOf(payload, response) {
-      const error = new Error(payload?.message ?? `HTTP ${response.status}`)
-      error.code = payload?.code
+      const failed = Array.isArray(payload?.failed) ? payload.failed : []
+      const reasons = failed
+        .map((entry) => (typeof entry?.message === 'string' ? entry.message : ''))
+        .filter((message) => message !== '')
+      // A batch always answers 200 and carries its reason in failed[], never at
+      // the top level; without this the refusal surfaced as a bare status code.
+      const summary = reasons.length > 0
+        ? reasons.join('；')
+        : failed.length > 0
+          ? t('batch.allFailed', { n: failed.length, codes: failed.map((entry) => entry?.code ?? 'unknown').join('、') })
+          : `HTTP ${response.status}`
+      const error = new Error(payload?.message ?? summary)
+      error.code = payload?.code ?? failed[0]?.code
       error.activity = Array.isArray(payload?.activity) ? payload.activity : null
+      error.failed = failed
+      error.removed = Array.isArray(payload?.removed) ? payload.removed : null
       return error
     }
 
+    /** The usage switch both dialogs share. */
+    function UsageSwitch(props) {
+      const on = useSyncExternalStore(subscribeUsage, getUsageEnabled)
+      return h('label', { className: `dsd-usageSwitch${props.compact === true ? ' dsd-usageSwitchSm' : ''}` }, [
+        h('input', {
+          type: 'checkbox',
+          className: 'dsd-check',
+          checked: on,
+          onChange: () => setUsageEnabled(!on),
+        }),
+        h('span', { children: t('usage.toggle') }),
+      ])
+    }
+
     /** Ask the Host what this Session's state is before committing to anything. */
-    async function inspectSession(sessionId) {
-      const response = await fetch(`${INSPECT_PATH}?sessionId=${encodeURIComponent(sessionId)}`, { cache: 'no-store' })
+    async function inspectSession(sessionId, usage = true) {
+      const suffix = usage === false ? '&usage=0' : ''
+      const response = await fetch(`${INSPECT_PATH}?sessionId=${encodeURIComponent(sessionId)}${suffix}`, { cache: 'no-store' })
       const payload = await response.json().catch(() => null)
       if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
       return payload
@@ -371,21 +452,11 @@ window.__ModuleLoader__.load({
       return payload
     }
 
-    /** Ask the Host to drop every cached usage fold before the next read. */
-    async function refreshSessionStats() {
-      const response = await fetch(REFRESH_STATS_PATH, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({}),
-      })
-      const payload = await response.json().catch(() => null)
-      if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
-      return payload
-    }
 
     /** Read the whole corpus, grouped by Workspace, for the bulk dialog. */
-    async function fetchCatalog() {
-      const response = await fetch(CATALOG_PATH, { cache: 'no-store' })
+    async function fetchCatalog(usage = true) {
+      const suffix = usage === false ? '?usage=0' : ''
+      const response = await fetch(`${CATALOG_PATH}${suffix}`, { cache: 'no-store' })
       const payload = await response.json().catch(() => null)
       if (!response.ok || payload?.ok !== true) throw failureOf(payload, response)
       return payload
@@ -657,6 +728,8 @@ window.__ModuleLoader__.load({
       /** The Session whose folder is opening right now, and the last failure. */
       const [openingFolder, setOpeningFolder] = useState(null)
       const [folderError, setFolderError] = useState(null)
+      /** The shared switch: when off, the Host is asked not to read any log. */
+      const usageOn = useSyncExternalStore(subscribeUsage, getUsageEnabled)
 
       const close = useCallback(() => {
         setState((previous) => {
@@ -698,7 +771,7 @@ window.__ModuleLoader__.load({
         let cancelled = false
         setState({ phase: 'checking', info: null, error: null, stop: false, busy: false })
         setSelected(null)
-        inspectSession(request.sessionId).then(
+        inspectSession(request.sessionId, usageOn).then(
           (info) => {
             if (cancelled) return
             const items = Array.isArray(info?.descendants?.items) ? info.descendants.items : []
@@ -719,7 +792,7 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [request])
+      }, [request, usageOn])
 
       useEffect(() => {
         if (request === null) return undefined
@@ -811,6 +884,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsd-head', key: 'head' }, [
             h('span', { className: 'dsd-headIcon', key: 'icon', 'aria-hidden': true, children: treeGlyph('trash', 18) }),
             h('h2', { className: 'dsd-title', key: 'title', children: t('dialog.title') }),
+            h(UsageSwitch, { key: 'usage', compact: true }),
             h('button', {
               type: 'button',
               className: 'dsd-close',
@@ -827,6 +901,7 @@ window.__ModuleLoader__.load({
               title,
               usage: info.usage?.self,
               familyUsage: info.usage?.family,
+              usageDisabled: info.usage?.disabled === true,
               directory: info.directory,
               onOpen: () => openFolder(request.sessionId),
               opening: openingFolder === request.sessionId,
@@ -866,6 +941,7 @@ window.__ModuleLoader__.load({
             mainFamilyUsage: info?.usage?.family,
             mainDirectory: info?.directory,
             mainSessionId: request.sessionId,
+            usageDisabled: info?.usage?.disabled === true,
             leafName: t('dialog.untitledItem'),
           }),
           info?.descendants?.truncated === true
@@ -894,20 +970,6 @@ window.__ModuleLoader__.load({
             ? null
             : h('p', { className: 'dsd-error', key: 'error', children: `${t('dialog.failed')}：${state.error}` }),
           h('div', { className: 'dsd-footer', key: 'footer' }, [
-            h('button', {
-              type: 'button',
-              className: 'dsd-button dsd-outline dsd-footerLeft',
-              key: 'folder',
-              disabled: state.busy || info?.directory?.available !== true || openingFolder === request.sessionId,
-              title: info?.directory?.available === true
-                ? (info.directory.path ?? '')
-                : (info?.directory?.reason ?? t('dialog.folderNone')),
-              onClick: () => openFolder(request.sessionId),
-              children: [
-                h('span', { className: 'dsd-ghostIcon', key: 'icon', children: folderGlyph(14) }),
-                t('dialog.openMainDirectory'),
-              ],
-            }),
             h('button', {
               type: 'button',
               className: 'dsd-button dsd-outline',
@@ -1156,7 +1218,8 @@ window.__ModuleLoader__.load({
      * @param {object} props - title, usage, directory, open state and the open callback.
      */
     function SessionSummary(props) {
-      const { title, usage, familyUsage, directory, onOpen, opening, openError } = props
+      const { title, usage, familyUsage, directory, onOpen, opening, openError, usageDisabled } = props
+      const usageOff = usageDisabled === true
       const available = directory?.available === true
       const lastActive = formatMoment(usage?.lastActivityAt)
       const hitRate = typeof usage?.hitRate === 'number' ? usage.hitRate : 0
@@ -1190,25 +1253,27 @@ window.__ModuleLoader__.load({
             glyph: tokensGlyph(12),
             tone: 'dsd-toneBlue',
             label: t('dialog.totalTokens'),
-            value: `${formatTokens(usage?.totalTokens ?? 0)} ${t('dialog.tokensUnit')}`,
+            value: usageOff ? t('usage.off') : `${formatTokens(usage?.totalTokens ?? 0)} ${t('dialog.tokensUnit')}`,
           }),
           h(Metric, {
             key: 'family',
             glyph: tokensGlyph(12),
             tone: 'dsd-toneBlue',
             label: t('dialog.familyTotal'),
-            value: `${formatTokens(familyTotal)} ${t('dialog.tokensUnit')}`,
+            value: usageOff ? t('usage.off') : `${formatTokens(familyTotal)} ${t('dialog.tokensUnit')}`,
           }),
           h(Metric, {
             key: 'hit',
             glyph: cacheGlyph(12),
             tone: 'dsd-toneGreen',
             label: t('dialog.hitRate'),
-            value: formatPercent(hitRate),
+            value: usageOff ? t('usage.off') : formatPercent(hitRate),
           }),
         ]),
-        h(UsageBar, { key: 'bar', usage }),
-        h(UsageLegend, { key: 'legend', usage }),
+        usageOff
+          ? h('p', { className: 'dsd-noteHint', key: 'usageOff', children: t('usage.offHint') })
+          : h(UsageBar, { key: 'bar', usage }),
+        usageOff ? null : h(UsageLegend, { key: 'legend', usage }),
         usage?.note ? h('p', { className: 'dsd-noteHint', key: 'note', children: t('dialog.incomplete', { note: usage.note }) }) : null,
         familyUsage?.note ? h('p', { className: 'dsd-noteHint', key: 'familyNote', children: t('dialog.incomplete', { note: familyUsage.note }) }) : null,
         openError ? h('p', { className: 'dsd-error', key: 'openError', children: t('dialog.openFailed', { message: openError }) }) : null,
@@ -1364,18 +1429,21 @@ window.__ModuleLoader__.load({
         const own = usage?.totalTokens ?? 0
         const branch = familyUsage?.totalTokens ?? 0
         const hasBranch = familyUsage !== null && familyUsage !== undefined
+        const usageOff = usage?.disabled === true || props.usageDisabled === true
         // The root row carries `own/branch`, so the two quantities can never be
         // read as one; every child row carries its own count alone.
-        const tokenText = hasBranch ? `${formatTokens(own)}/${formatTokens(branch)}` : formatTokens(own)
+        const tokenText = usageOff ? t('usage.off') : hasBranch ? `${formatTokens(own)}/${formatTokens(branch)}` : formatTokens(own)
         return h('span', { className: 'dsd-figures', key: 'figures' }, [
           usage === null || usage === undefined
             ? null
             : h('span', {
               className: 'dsd-nodeTokens',
               key: 'tokens',
-              title: hasBranch
-                ? `${t('dialog.selfTotal')}：${formatTokens(own)}\n${t('dialog.familyTotal')}：${formatTokens(branch)}`
-                : `${t('dialog.selfTotal')}：${formatTokens(own)}`,
+              title: usageOff
+                ? t('usage.offHint')
+                : hasBranch
+                  ? `${t('dialog.selfTotal')}：${formatTokens(own)}\n${t('dialog.familyTotal')}：${formatTokens(branch)}`
+                  : `${t('dialog.selfTotal')}：${formatTokens(own)}`,
               children: tokenText,
             }),
           usage?.lastActivityAt
@@ -1504,7 +1572,7 @@ window.__ModuleLoader__.load({
       const [confirmAll, setConfirmAll] = useState(false)
       const [cacheError, setCacheError] = useState(null)
       const [openingCache, setOpeningCache] = useState(false)
-      const [refreshing, setRefreshing] = useState(false)
+      const usageOn = useSyncExternalStore(subscribeUsage, getUsageEnabled)
       const dialog = useRef(null)
 
       const close = useCallback(() => {
@@ -1522,27 +1590,6 @@ window.__ModuleLoader__.load({
         setBulkOpen(false)
       }, [])
 
-      /** Drop the Host-side fold cache, then read the corpus again. */
-      const refresh = useCallback(() => {
-        if (refreshing) return
-        setRefreshing(true)
-        refreshSessionStats().then(
-          () => fetchCatalog().then(
-            (catalog) => {
-              setRefreshing(false)
-              setState((previous) => ({ ...previous, catalog, error: null }))
-            },
-            (reason) => {
-              setRefreshing(false)
-              setState((previous) => ({ ...previous, error: reason instanceof Error ? reason.message : String(reason) }))
-            },
-          ),
-          (reason) => {
-            setRefreshing(false)
-            setState((previous) => ({ ...previous, error: reason instanceof Error ? reason.message : String(reason) }))
-          },
-        )
-      }, [refreshing])
 
       // The list is re-read on every open: a batch view is only true for the
       // moment it was read, and the sidebar may have changed in between.
@@ -1555,7 +1602,7 @@ window.__ModuleLoader__.load({
         setPage(0)
         setConfirmAll(false)
         setCacheError(null)
-        fetchCatalog().then(
+        fetchCatalog(usageOn).then(
           (catalog) => {
             if (cancelled) return
             setState({ phase: 'ready', catalog, error: null, busy: false })
@@ -1573,7 +1620,7 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [open])
+      }, [open, usageOn])
 
       useEffect(() => {
         if (!open) return undefined
@@ -1705,9 +1752,13 @@ window.__ModuleLoader__.load({
         ])
       }
 
-      const visibleIds = visible.map((row) => row.node.entry.id)
-      const chosenVisible = visibleIds.filter((id) => picked.has(id)).length
-      const allVisibleChosen = visibleIds.length > 0 && chosenVisible === visibleIds.length
+      // A stale row has no persisted Session left: it cannot be deleted, so it
+      // is never part of a selection.
+      const selectableIds = visible
+        .filter((entry) => entry.node.entry.stale !== true)
+        .map((entry) => entry.node.entry.id)
+      const chosenVisible = selectableIds.filter((id) => picked.has(id)).length
+      const allVisibleChosen = selectableIds.length > 0 && chosenVisible === selectableIds.length
 
       const setMany = (ids, on) => {
         setSelected(() => {
@@ -1721,6 +1772,7 @@ window.__ModuleLoader__.load({
       }
 
       const toggleNode = (node, on) => {
+        if (node.entry.stale === true) return
         const ids = [node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)]
         setMany(ids, on)
       }
@@ -1733,7 +1785,7 @@ window.__ModuleLoader__.load({
       const buildRoots = () => {
         const roots = []
         const collect = (node, underChosen) => {
-          const on = picked.has(node.entry.id)
+          const on = picked.has(node.entry.id) && node.entry.stale !== true
           if (on && !underChosen) {
             roots.push({
               sessionId: node.entry.id,
@@ -1767,11 +1819,27 @@ window.__ModuleLoader__.load({
             }))
           },
           (reason) => {
+            const failed = Array.isArray(reason?.failed) ? reason.failed : []
+            const removed = Array.isArray(reason?.removed) ? reason.removed : null
             setState((previous) => ({
               ...previous,
               busy: false,
+              errorKind: 'delete',
               error: reason instanceof Error ? reason.message : String(reason),
             }))
+            if (removed !== null && removed.length > 0) {
+              // Some roots went through: re-read so the gone rows leave the
+              // tree, and keep only the failures ticked.
+              fetchCatalog().then(
+                (catalog) => {
+                  setState((previous) => ({ ...previous, catalog }))
+                  setSelected(() => new Set(failed.map((entry) => entry.sessionId)))
+                },
+                () => setSelected(() => new Set(failed.map((entry) => entry.sessionId))),
+              )
+            } else if (failed.length > 0) {
+              setSelected(() => new Set(failed.map((entry) => entry.sessionId)))
+            }
           },
         )
       }
@@ -1797,12 +1865,14 @@ window.__ModuleLoader__.load({
         const isCollapsed = expanded[id] !== true
         const hasChildren = node.children.length > 0
         const usage = entry.usage
+        const usageOff = usage?.disabled === true
         const own = usage?.totalTokens ?? 0
         const branch = entry.familyUsage?.totalTokens ?? 0
         const hasBranch = entry.kind === 'root' && entry.familyUsage !== null && entry.familyUsage !== undefined
         const parent = typeof entry.parentId === 'string' ? forest.byId.get(entry.parentId) : undefined
         const glyphName = entry.kind === 'subagent' ? 'subagent' : entry.kind === 'derived' ? 'chat' : 'session'
         const available = entry.directory?.available === true
+        const stale = entry.stale === true
         return h('div', {
           className: `dsd-bulkRow${depth > 0 ? ' dsd-bulkRowChild' : ''}`,
           key: id,
@@ -1821,8 +1891,9 @@ window.__ModuleLoader__.load({
             type: 'checkbox',
             key: 'box',
             className: 'dsd-check',
-            checked: picked.has(id),
-            disabled: busy,
+            checked: picked.has(id) && !stale,
+            disabled: busy || stale,
+            title: stale ? t('batch.staleHint') : undefined,
             onChange: () => toggleNode(node, !picked.has(id)),
           }),
           h('span', { className: 'dsd-rowIcon', key: 'icon', children: treeGlyph(glyphName, 14) }),
@@ -1833,15 +1904,21 @@ window.__ModuleLoader__.load({
               title: entry.title ?? '',
               children: entry.title === undefined || entry.title === '' ? t('batch.untitled') : entry.title,
             }),
-            entry.kind === 'derived' && parent !== undefined
-              ? h('span', { className: 'dsd-bulkOwner', key: 'owner', children: `所属：${parent.entry.title ?? t('batch.untitled')}` })
-              : null,
+            stale
+              ? h('span', { className: 'dsd-bulkOwner dsd-stale', key: 'stale', children: t('batch.stale') })
+              : entry.kind === 'derived' && parent !== undefined
+                ? h('span', { className: 'dsd-bulkOwner', key: 'owner', children: `所属：${parent.entry.title ?? t('batch.untitled')}` })
+                : null,
           ]),
           h('span', {
             className: 'dsd-bulkTokens',
             key: 'tokens',
-            title: hasBranch ? `本会话自身：${formatTokens(own)}\n会话家族：${formatTokens(branch)}` : `本会话自身：${formatTokens(own)}`,
-            children: hasBranch ? `${formatTokens(own)}/${formatTokens(branch)}` : formatTokens(own),
+            title: usageOff
+              ? t('usage.offHint')
+              : hasBranch ? `本会话自身：${formatTokens(own)}\n会话家族：${formatTokens(branch)}` : `本会话自身：${formatTokens(own)}`,
+            children: usageOff
+              ? t('usage.off')
+              : hasBranch ? `${formatTokens(own)}/${formatTokens(branch)}` : formatTokens(own),
           }),
           h('span', {
             className: 'dsd-bulkTime',
@@ -1922,21 +1999,26 @@ window.__ModuleLoader__.load({
                   glyph: tokensGlyph(12),
                   tone: 'dsd-toneBlue',
                   label: t('dialog.totalTokens'),
-                  value: `${formatTokens(summary.tokens ?? 0)} ${t('dialog.tokensUnit')}`,
+                  value: summary.usageDisabled === true ? t('usage.off') : `${formatTokens(summary.tokens ?? 0)} ${t('dialog.tokensUnit')}`,
                 }),
                 h(Metric, {
                   key: 'hit',
                   glyph: cacheGlyph(12),
                   tone: 'dsd-toneGreen',
                   label: t('dialog.hitRate'),
-                  value: formatPercent(summary.hitRate ?? 0),
+                  value: summary.usageDisabled === true ? t('usage.off') : formatPercent(summary.hitRate ?? 0),
                 }),
               ]),
-              h(UsageBar, { key: 'bar', usage: cacheUsage }),
-              h(UsageLegend, { key: 'legend', usage: cacheUsage }),
+              summary.usageDisabled === true
+                ? h('p', { className: 'dsd-noteHint', key: 'usageOff', children: t('usage.offHint') })
+                : h(UsageBar, { key: 'bar', usage: cacheUsage }),
+              summary.usageDisabled === true ? null : h(UsageLegend, { key: 'legend', usage: cacheUsage }),
             ]),
 
           h('p', { className: 'dsd-desc', key: 'desc', children: t('batch.desc') }),
+          summary !== null && (summary.stale ?? 0) > 0
+            ? h('p', { className: 'dsd-noteHint', key: 'staleNote', children: t('batch.staleCount', { n: summary.stale }) })
+            : null,
 
           // Toolbar: search, sort, filters, select-all.
           h('div', { className: 'dsd-bulkTools', key: 'tools' }, [
@@ -1991,12 +2073,13 @@ window.__ModuleLoader__.load({
                 type: 'checkbox',
                 className: 'dsd-check',
                 checked: allVisibleChosen,
-                disabled: busy || visibleIds.length === 0,
+                disabled: busy || selectableIds.length === 0,
                 ref: (node) => { if (node !== null) node.indeterminate = chosenVisible > 0 && !allVisibleChosen },
-                onChange: () => setMany(visibleIds, !allVisibleChosen),
+                onChange: () => setMany(selectableIds, !allVisibleChosen),
               }),
-              h('span', { children: t('batch.selectPage', { n: visibleIds.length }) }),
+              h('span', { children: t('batch.selectPage', { n: selectableIds.length }) }),
             ]),
+
           ]),
 
           state.phase === 'loading'
@@ -2004,7 +2087,7 @@ window.__ModuleLoader__.load({
             : null,
           state.error === null
             ? null
-            : h('p', { className: 'dsd-error', key: 'error', children: `${t('batch.failed')}：${state.error}` }),
+            : h('p', { className: 'dsd-error', key: 'error', children: `${t(state.errorKind === 'delete' ? 'batch.deleteFailed' : 'batch.failed')}：${state.error}` }),
           state.phase === 'ready' && catalog === null && state.error === null
             ? h('p', { className: 'dsd-note', key: 'unknown', children: t('batch.unknown') })
             : null,
@@ -2057,14 +2140,7 @@ window.__ModuleLoader__.load({
                   t('batch.openCache'),
                 ],
               }),
-              h('button', {
-                type: 'button',
-                className: 'dsd-button dsd-outline dsd-btnSm',
-                key: 'refresh',
-                disabled: busy || refreshing,
-                onClick: refresh,
-                children: t('batch.refresh'),
-              }),
+              h(UsageSwitch, { key: 'usage', compact: true }),
             ]),
             h('div', { className: 'dsd-bulkRight', key: 'right' }, [
               h('label', { className: 'dsd-row dsd-stopRow dsd-bulkStop', key: 'stop' }, [
@@ -2122,6 +2198,7 @@ window.__ModuleLoader__.load({
               }),
             ]),
           ]),
+          h('p', { className: 'dsd-bulkNote', key: 'cacheNote', children: t('usage.cacheNote') }),
         ]),
       ])
     }
@@ -2327,6 +2404,10 @@ window.__ModuleLoader__.load({
 .dsd-bulkFooter .dsd-stopRow{flex:0 1 auto}
 .dsd-bulkStop .dsd-rowText{font-size:11.5px}
 .dsd-btnSm{height:28px;padding:0 9px;font-size:12px;line-height:18px;gap:5px}
+.dsd-usageSwitch{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#a8adb7);cursor:pointer;user-select:none;white-space:nowrap}
+.dsd-usageSwitch .dsd-check{width:13px;height:13px}
+.dsd-usageSwitchSm{font-size:11.5px}
+.dsd-bulkNote{margin:6px 2px 0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary,#8b909a)}
 /* Nested tree: a deeper indent per level, a visible guide line down the left
    of every child list, and a short connector from that line into each row. */
 /* One family per card: the block sits on its own surface, one step off the
@@ -2357,7 +2438,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots'],
+      inject: ['slots', 'locale'],
       apply(ctx) {
         const locale = ctx.get('locale')
         if (locale !== undefined && typeof locale.register === 'function' && typeof locale.bind === 'function') {

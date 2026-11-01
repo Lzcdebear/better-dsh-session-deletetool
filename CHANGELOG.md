@@ -1,7 +1,41 @@
 # Changelog
 
-## 0.6.0
+## 0.6.3
 
+**The surfaces settle down, and usage becomes optional.** 0.6.1 and 0.6.2 were
+never published on their own; their fixes ship here.
+
+- **Usage switch.** A shared "show usage" toggle, persisted in `localStorage`. Turned
+  off, the Client sends `usage=0` and the Host never folds a log: `/catalog` and
+  `/inspect` answer with `usage: { disabled: true }`, and every figure that would have
+  shown tokens or a hit rate reads “已关闭 / Off”.
+- **Bulk surface.** The switch moved next to “open session cache folder” at the bottom,
+  the “refresh cache” button is gone, and a line under the action bar explains what the
+  session cache is and where it lives.
+- **Single dialog.** The bottom “open conversation folder” button is gone; the summary
+  card already carries one.
+- **Fixed:** the bulk dialog failed to open because the select-all checkbox still read a
+  variable that had been renamed away.
+
+### 0.6.2 — ghost sessions
+
+- A batch refusal no longer reads “read failed: HTTP 200”. `failureOf` now reads
+  `failed[].message` and carries `failed` / `removed` on the error.
+- The catalog marks a conversation whose persisted record is gone as `stale`: its
+  checkbox is disabled with a reason, and select-all skips it.
+- A partial batch re-reads the catalog so the deleted rows leave the tree, and keeps
+  only the failures ticked.
+- New copy: `batch.deleteFailed`, `batch.stale`, `batch.staleHint`, `batch.allFailed`,
+  `batch.staleCount`.
+
+### 0.6.1 — desktop locale
+
+- `inject` now includes `locale`, so `apply()` waits for the desktop shell to provide
+  it instead of reading `undefined` and falling back to Chinese for every string.
+- The fallback table is English (`DICT.en[key] ?? DICT.zh[key]`), the package's primary
+  copy, so an unreachable locale service cannot turn the UI Chinese.
+
+## 0.6.0
 **From a delete tool to a conversation manager.** The single-conversation dialog grew a usage
 card and a real family tree, and the bulk entry became a management surface of its own.
 

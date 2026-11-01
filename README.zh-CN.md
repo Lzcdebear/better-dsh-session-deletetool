@@ -17,7 +17,8 @@ DSH 自带的只有归档。这个插件补上删除：会话日志目录、工�
 - **Fork 去重。** Fork 子会话继承的日志前缀会被跳过，请求再按消息 id 去重，不会把父会话过去的消耗重复计到子会话头上。
 - **本地目录。** 每行右侧的文件夹按钮打开该节点自己的目录。路径由 Host 通过 `sessionPersistence.locate` 解析，不按会话名拼路径。
 - **批量管理。** 每个家族一张卡片，支持按名称搜索、按最后活跃 / Token / 命中率排序、按类型与工作区筛选、分页、本页全选、删除选中，以及二次确认后的删除全部。
-- **缓存控制。** 可以打开 DSH 的投影缓存目录，也可以刷新插件自己的用量缓存。
+- **缓存控制。** 可以打开 DSH 的投影缓存目录，操作栏下方会说明这个目录是什么。
+- **用量开关。** 关掉后 Host 不再读取会话日志，Token 与命中率的位置显示“已关闭”。
 
 ## 安装
 
@@ -83,6 +84,13 @@ npm install better-dsh-session-deletetool
 ```sh
 node --test test/host.test.mjs
 ```
+
+## 致谢
+
+本版本收到并采纳的问题反馈：
+
+- [@rowan-firm](https://github.com/rowan-firm)
+- [@Wolf-Keys](https://github.com/Wolf-Keys)
 
 ## 许可
 
