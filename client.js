@@ -1981,25 +1981,9 @@ window.__ModuleLoader__.load({
 
       const toggleOnly = (node) => {
         if (node.entry.stale === true || node.entry.deleted === true) return
-        const parentId = node.entry.parentId
-        const isRoot = typeof parentId !== 'string' || !forest.byId.has(parentId)
-        if (isRoot) {
-          if (!pickedRef.current.has(node.entry.id)) {
-            // The root is unticked: the double click completes the whole family.
-            setMany([node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)], true)
-          } else {
-            // The root is ticked: the double click takes only the root back out.
-            setMany([node.entry.id], false)
-          }
-          return
-        }
-        const state = singleStateOf(node, pickedRef.current)
-        if (node.children.length === 0) {
-          setMany([node.entry.id], state === 'none')
-          return
-        }
-        if (state === 'self') setMany([node.entry.id], false)
-        else selectOnly(node.entry.id, [node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)])
+        const id = node.entry.id
+        // Double click toggles only this node; its descendants keep their state.
+        setMany([id], !pickedRef.current.has(id))
       }
 
       const toggleExpand = (id, nextOpen) => {

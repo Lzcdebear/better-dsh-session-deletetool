@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2
+
+**Bulk double-click.**
+
+- Double-clicking any row in the bulk dialog toggles only that row; its descendants keep their state. The row reads green (only itself), yellow (some descendants) or red (all descendants) from the actual selection.
+- Single click still selects or clears the whole subtree of a row.
+
 ## 0.7.1
 
 **Selection fixes.**
