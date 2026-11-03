@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+**Selection fixes.**
+
+- Single dialog: a click toggles only the clicked node; the main conversation and its children no longer select or clear each other. The top Select all box still takes the whole family.
+- Bulk dialog: a parent is blank unless it is selected, then green/yellow/red by its descendants. Double-clicking a root unticks only the root when it is ticked, and selects the whole family when it is unticked; other rows keep double-click-to-select-self.
+
 ## 0.7.0
 
 **Single-conversation tree selection.**

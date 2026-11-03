@@ -1528,16 +1528,9 @@ window.__ModuleLoader__.load({
         : undefined
       const allIds = mainNode === undefined ? items.map((entry) => entry.id) : subtreeIds(mainNode)
 
-      /** A click selects only this node; the whole-family box above takes the rest. */
+      /** A click toggles only this node; it never touches its descendants. */
       const toggleOnly = (node) => {
-        const current = selectedRef.current
-        const state = singleStateOf(node, current)
-        if (node.children.length === 0) {
-          onToggle([node.id], state === 'none')
-          return
-        }
-        if (state === 'self') onToggle([node.id], false)
-        else onSelectOnly(node.id, subtreeIds(node))
+        onToggle([node.id], !selectedRef.current.has(node.id))
       }
 
       /** The single-conversation box of one node: blank unless the node itself is selected. */
@@ -1977,7 +1970,7 @@ window.__ModuleLoader__.load({
       const toggleNode = (node) => {
         if (node.entry.stale === true || node.entry.deleted === true) return
         const ids = [node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)]
-        const state = selectionStateOf(node, pickedRef.current)
+        const state = singleStateOf(node, pickedRef.current)
         if (node.children.length > 0) {
           if (state === 'all') setMany(ids, false)
           else setMany(ids, true)
@@ -1988,7 +1981,19 @@ window.__ModuleLoader__.load({
 
       const toggleOnly = (node) => {
         if (node.entry.stale === true || node.entry.deleted === true) return
-        const state = selectionStateOf(node, pickedRef.current)
+        const parentId = node.entry.parentId
+        const isRoot = typeof parentId !== 'string' || !forest.byId.has(parentId)
+        if (isRoot) {
+          if (!pickedRef.current.has(node.entry.id)) {
+            // The root is unticked: the double click completes the whole family.
+            setMany([node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)], true)
+          } else {
+            // The root is ticked: the double click takes only the root back out.
+            setMany([node.entry.id], false)
+          }
+          return
+        }
+        const state = singleStateOf(node, pickedRef.current)
         if (node.children.length === 0) {
           setMany([node.entry.id], state === 'none')
           return
@@ -2114,7 +2119,7 @@ window.__ModuleLoader__.load({
           }),
           h(SelectionBox, {
             key: 'box',
-            state: stale || deleted ? 'none' : selectionStateOf(node, picked),
+            state: stale || deleted ? 'none' : singleStateOf(node, picked),
             disabled: busy || stale || deleted,
             title: deleted ? '这个父会话已经被删除，只作为结构显示，不能选择。' : stale ? t('batch.staleHint') : undefined,
             onClick: () => {
