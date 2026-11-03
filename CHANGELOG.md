@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.4
+
+**An orphan fork no longer joins every family in its workspace.**
+
+- Single-conversation delete: a fork whose `parentSession` is gone is no longer
+  collected as a descendant of every conversation that shares its `cwd`; the
+  family walk follows recorded lineage only.
+- Bulk management: such a fork keeps its tree under a placeholder row titled
+  “已删除” plus the last six characters of the missing parent id. The row sits
+  first in its workspace group, cannot be selected, and disappears once no child
+  names it.
+- The placeholder is derived at read time from the children's headers; no session
+  file is written.
+- Tests: catalog placeholder coverage, and a regression test that a missing-parent
+  fork stays out of a live Session's family.
+
 ## 0.6.3
 
 **The surfaces settle down, and usage becomes optional.** 0.6.1 and 0.6.2 were

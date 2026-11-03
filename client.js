@@ -1717,6 +1717,9 @@ window.__ModuleLoader__.load({
       const compare = (left, right) => {
         const a = left.entry
         const b = right.entry
+        const deletedA = a.deleted === true ? 1 : 0
+        const deletedB = b.deleted === true ? 1 : 0
+        if (deletedA !== deletedB) return deletedB - deletedA
         if (sort === 'tokens') return (b.usage?.totalTokens ?? 0) - (a.usage?.totalTokens ?? 0)
         if (sort === 'hit') return (b.usage?.hitRate ?? 0) - (a.usage?.hitRate ?? 0)
         return (b.usage?.lastActivityAt ?? 0) - (a.usage?.lastActivityAt ?? 0)
@@ -1755,7 +1758,7 @@ window.__ModuleLoader__.load({
       // A stale row has no persisted Session left: it cannot be deleted, so it
       // is never part of a selection.
       const selectableIds = visible
-        .filter((entry) => entry.node.entry.stale !== true)
+        .filter((entry) => entry.node.entry.stale !== true && entry.node.entry.deleted !== true)
         .map((entry) => entry.node.entry.id)
       const chosenVisible = selectableIds.filter((id) => picked.has(id)).length
       const allVisibleChosen = selectableIds.length > 0 && chosenVisible === selectableIds.length
@@ -1772,7 +1775,7 @@ window.__ModuleLoader__.load({
       }
 
       const toggleNode = (node, on) => {
-        if (node.entry.stale === true) return
+        if (node.entry.stale === true || node.entry.deleted === true) return
         const ids = [node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)]
         setMany(ids, on)
       }
@@ -1870,11 +1873,12 @@ window.__ModuleLoader__.load({
         const branch = entry.familyUsage?.totalTokens ?? 0
         const hasBranch = entry.kind === 'root' && entry.familyUsage !== null && entry.familyUsage !== undefined
         const parent = typeof entry.parentId === 'string' ? forest.byId.get(entry.parentId) : undefined
-        const glyphName = entry.kind === 'subagent' ? 'subagent' : entry.kind === 'derived' ? 'chat' : 'session'
+        const glyphName = entry.deleted === true ? 'trash' : entry.kind === 'subagent' ? 'subagent' : entry.kind === 'derived' ? 'chat' : 'session'
         const available = entry.directory?.available === true
         const stale = entry.stale === true
+        const deleted = entry.deleted === true
         return h('div', {
-          className: `dsd-bulkRow${depth > 0 ? ' dsd-bulkRowChild' : ''}`,
+          className: `dsd-bulkRow${depth > 0 ? ' dsd-bulkRowChild' : ''}${deleted ? ' dsd-bulkRowDeleted' : ''}`,
           key: id,
         }, [
           h('button', {
@@ -1891,9 +1895,9 @@ window.__ModuleLoader__.load({
             type: 'checkbox',
             key: 'box',
             className: 'dsd-check',
-            checked: picked.has(id) && !stale,
-            disabled: busy || stale,
-            title: stale ? t('batch.staleHint') : undefined,
+            checked: picked.has(id) && !stale && !deleted,
+            disabled: busy || stale || deleted,
+            title: deleted ? '这个父会话已经被删除，只作为结构显示，不能选择。' : stale ? t('batch.staleHint') : undefined,
             onChange: () => toggleNode(node, !picked.has(id)),
           }),
           h('span', { className: 'dsd-rowIcon', key: 'icon', children: treeGlyph(glyphName, 14) }),
@@ -1904,11 +1908,13 @@ window.__ModuleLoader__.load({
               title: entry.title ?? '',
               children: entry.title === undefined || entry.title === '' ? t('batch.untitled') : entry.title,
             }),
-            stale
-              ? h('span', { className: 'dsd-bulkOwner dsd-stale', key: 'stale', children: t('batch.stale') })
-              : entry.kind === 'derived' && parent !== undefined
-                ? h('span', { className: 'dsd-bulkOwner', key: 'owner', children: `所属：${parent.entry.title ?? t('batch.untitled')}` })
-                : null,
+            deleted
+              ? null
+              : stale
+                ? h('span', { className: 'dsd-bulkOwner dsd-stale', key: 'stale', children: t('batch.stale') })
+                : entry.kind === 'derived' && parent !== undefined
+                  ? h('span', { className: 'dsd-bulkOwner', key: 'owner', children: `所属：${parent.entry.title ?? t('batch.untitled')}` })
+                  : null,
           ]),
           h('span', {
             className: 'dsd-bulkTokens',
@@ -2392,6 +2398,8 @@ window.__ModuleLoader__.load({
 .dsd-bulkList{flex:1;min-height:120px;display:flex;flex-direction:column;gap:1px;overflow:auto;padding:6px;border-radius:12px;border:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18));background:var(--dsw-alias-bg-layer-1,#f7f8fa)}
 .dsd-bulkRow{display:flex;align-items:center;gap:8px;min-height:30px;padding:2px 8px;border-radius:8px}
 .dsd-bulkRow:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dsd-bulkRowDeleted .dsd-bulkTitle{opacity:.62}
+.dsd-bulkRowDeleted .dsd-rowIcon{opacity:.62}
 .dsd-bulkName{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
 .dsd-bulkTitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsd-bulkOwner{font-size:10.5px;color:var(--dsw-alias-label-tertiary,#8b909a);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

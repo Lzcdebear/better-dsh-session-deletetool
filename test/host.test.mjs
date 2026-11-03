@@ -225,7 +225,15 @@ function servicesFor({
 
 test('registers the delete, inspect, catalog and batch routes', () => {
   const { state } = fakeContext()
-  assert.deepEqual([...state.routes.keys()].sort(), [DELETE, INSPECT, CATALOG, BATCH].sort())
+  assert.deepEqual([...state.routes.keys()].sort(), [
+    DELETE,
+    INSPECT,
+    CATALOG,
+    BATCH,
+    '/better-dsh-session-deletetool/open-cache',
+    '/better-dsh-session-deletetool/open-directory',
+    '/better-dsh-session-deletetool/refresh-stats',
+  ].sort())
   assert.equal(state.routes.get(DELETE).kind, 'exact')
   assert.equal(state.routes.get(CATALOG).kind, 'exact')
 })
@@ -518,8 +526,50 @@ test('inspect names the descendants a delete would take with it', async () => {
       agent: false,
       running: false,
       activity: [],
+      directory: { path: childDirectory, available: true, reason: null },
+      usage: {
+        cacheReadInputTokens: 0,
+        cacheMissInputTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        requestCount: 0,
+        hitRate: 0,
+        complete: false,
+        note: '读不到这个会话的日志：sessionQuery is not mounted in this profile',
+        lastActivityAt: null,
+        inheritedEventCount: 0,
+      },
     }],
   })
+})
+
+test('leaves a fork whose parent is gone out of a live Session family', async () => {
+  const sessionId = 'session-77777777-8888-9999-aaaa-bbbbbbbbbbbb'
+  const forkId = 'session-orphan1-0000-0000-0000-000000000001'
+  const directory = await fakeArtifact(sessionId)
+  const forkDirectory = await fakeArtifact(forkId)
+  const services = servicesFor({
+    sessionId,
+    directory,
+    extraDirectories: { [forkId]: forkDirectory },
+    lineage: [
+      { header: { id: sessionId, createdAt: 10, cwd: 'F:\\\\OneDrive\\\\Project_lzc' } },
+      // The fork names a parent the corpus no longer holds, and shares its cwd:
+      // it used to be broadcast into every root of this workspace.
+      { header: { id: forkId, parentSession: 'session-gone', isSeeded: true, cwd: 'F:\\\\OneDrive\\\\Project_lzc' } },
+    ],
+  })
+  const { state } = fakeContext({ services })
+
+  const response = await call(state, INSPECT, fakeRequest({
+    method: 'GET',
+    url: `${INSPECT}?sessionId=${sessionId}`,
+  }))
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.payload.descendants.items.map((entry) => entry.id), [])
+  assert.equal(response.payload.descendants.count, 0)
 })
 
 test('reports an unknown Session', async () => {
@@ -738,8 +788,17 @@ test('catalog groups sessions by workspace and names each row\'s place in its fa
   // all is the one case the ungrouped section exists for.
   assert.equal(response.payload.workspaces[1].workspaceId, null)
   assert.deepEqual(response.payload.workspaces[1].sessions.map((row) => row.id), [lonelyId])
-  assert.deepEqual(response.payload.workspaces[2].sessions.map((row) => row.id), [orphanId])
-  assert.equal(response.payload.workspaces[2].sessions[0].parentId, undefined)
+  assert.deepEqual(response.payload.workspaces[2].sessions.map((row) => row.id), ['session-gone', orphanId])
+  const placeholder = response.payload.workspaces[2].sessions[0]
+  assert.equal(placeholder.title, '已删除 n-gone')
+  assert.equal(placeholder.deleted, true)
+  assert.equal(placeholder.stale, true)
+  assert.equal(placeholder.hasChildren, true)
+  assert.equal(placeholder.family, 1)
+  assert.equal(placeholder.depth, 0)
+  assert.equal(placeholder.parentId, undefined)
+  assert.equal(response.payload.workspaces[2].sessions[1].parentId, 'session-gone')
+  assert.equal(response.payload.workspaces[2].sessions[1].depth, 1)
   assert.equal(response.payload.workspaces[3].title, '未归类')
   assert.deepEqual(response.payload.workspaces[3].sessions.map((row) => row.id), [homelessId])
   assert.deepEqual(response.payload.totals, { workspaces: 4, sessions: 6, ungrouped: 1 })

@@ -586,6 +586,7 @@ async function buildCatalog(ctx, options = {}) {
     if (header !== undefined && typeof header.id === 'string' && SESSION_ID.test(header.id)) headers.push(header)
   }
   await attachTitles(ctx, headers)
+  const knownIds = new Set(headers.map((header) => header.id))
 
   // One fold per Session for the whole corpus. Each Session's own usage is
   // counted once here, so the corpus total cannot double-count a family.
@@ -633,7 +634,7 @@ async function buildCatalog(ctx, options = {}) {
       workspaceId: group.workspace === undefined ? null : String(group.workspace.id),
       title: group.workspace === undefined ? workspaceLabel(group.cwd) : String(group.workspace.title ?? ''),
       path: group.workspace === undefined ? String(group.cwd ?? '') : String(group.workspace.path ?? ''),
-      sessions: await catalogSessions(ctx, group.members, stats, directories, familyUsage, stored, withUsage),
+      sessions: await catalogSessions(ctx, group.members, stats, directories, familyUsage, stored, withUsage, knownIds),
     })
   }
   sections.sort((left, right) => sectionRank(rank, left) - sectionRank(rank, right) || left.title.localeCompare(right.title))
@@ -645,7 +646,7 @@ async function buildCatalog(ctx, options = {}) {
       workspaceId: null,
       title: '未归类',
       path: '',
-      sessions: await catalogSessions(ctx, ungrouped.members, stats, directories, familyUsage, stored, withUsage),
+      sessions: await catalogSessions(ctx, ungrouped.members, stats, directories, familyUsage, stored, withUsage, knownIds),
     })
   }
 
@@ -774,18 +775,27 @@ function summarizeCorpus(headers, stats) {
  * @param {Map<string, object>} stats - id → folded statistics.
  * @param {Map<string, object>} directories - id → resolved directory.
  * @param {Map<string, object>} familyUsage - id → recursive usage.
+ * @param {Set<string>} knownIds - every listed Session id in the corpus.
  * @returns {Promise<object[]>} the rows, parents before their children.
  */
-async function catalogSessions(ctx, members, stats, directories, familyUsage, stored, withUsage = true) {
+async function catalogSessions(ctx, members, stats, directories, familyUsage, stored, withUsage = true, knownIds = new Set()) {
   const inGroup = new Set(members.map((header) => header.id))
   const childrenOf = new Map()
+  /** Parent ids that no listed Session owns any more: deleted by hand. */
+  const deletedParentIds = new Set()
   for (const header of members) {
     const parent = typeof header.parentSession === 'string' ? header.parentSession : undefined
+    if (parent === undefined || parent === header.id) continue
+    const parentInGroup = inGroup.has(parent)
+    const parentGone = !parentInGroup && !knownIds.has(parent)
     // A parent outside this group is not rendered here, so the row stays a root:
-    // indenting it under a row that does not exist would read as a lost row.
-    if (parent === undefined || !inGroup.has(parent) || parent === header.id) continue
+    // indenting it under a row that does not exist would read as a lost row. A
+    // parent whose record is gone entirely is the exception: the batch view
+    // draws a placeholder for it so its children keep the tree they belong to.
+    if (!parentInGroup && !parentGone) continue
     if (!childrenOf.has(parent)) childrenOf.set(parent, [])
     childrenOf.get(parent).push(header)
+    if (parentGone) deletedParentIds.add(parent)
   }
 
   const depthOf = new Map()
@@ -795,7 +805,11 @@ async function catalogSessions(ctx, members, stats, directories, familyUsage, st
     guard.add(id)
     const header = members.find((entry) => entry.id === id)
     const parent = typeof header?.parentSession === 'string' ? header.parentSession : undefined
-    const value = parent === undefined || !inGroup.has(parent) || parent === id ? 0 : depthOfId(parent, guard) + 1
+    const value = parent === undefined || parent === id
+      ? 0
+      : deletedParentIds.has(parent)
+        ? 1
+        : !inGroup.has(parent) ? 0 : depthOfId(parent, guard) + 1
     depthOf.set(id, Math.min(value, MAX_LINEAGE_DEPTH))
     return depthOf.get(id)
   }
@@ -843,6 +857,35 @@ async function catalogSessions(ctx, members, stats, directories, familyUsage, st
     })
   }
 
+  // One placeholder per deleted parent: its children keep hanging under the id
+  // their headers still name, so the batch tree reads as a family instead of a
+  // set of loose roots. The row carries no Session of its own and can never be
+  // selected; it exists only while at least one child still names it.
+  for (const parentId of deletedParentIds) {
+    const children = childrenOf.get(parentId) ?? []
+    if (children.length === 0) continue
+    const createdAt = children.reduce((lowest, child) => {
+      const value = typeof child.createdAt === 'number' ? child.createdAt : 0
+      return lowest === 0 ? value : Math.min(lowest, value)
+    }, 0)
+    rows.push({
+      id: parentId,
+      kind: 'root',
+      depth: 0,
+      createdAt,
+      hasChildren: true,
+      family: children.length,
+      subagents: children.filter((child) => child.origin === 'subagent').length,
+      derived: children.filter((child) => child.origin !== 'subagent').length,
+      title: `已删除 ${parentId.slice(-6)}`,
+      deleted: true,
+      stale: true,
+      activity: [],
+      usage: withUsage ? usagePayload(undefined) : { disabled: true },
+      directory: { path: null, available: false, reason: '父会话已被删除，没有本地目录。' },
+    })
+  }
+
   // Parents before their children, so a family reads as one block; each level is
   // newest-first, the order the sidebar's own list uses.
   const newestFirst = (left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id)
@@ -857,7 +900,8 @@ async function catalogSessions(ctx, members, stats, directories, familyUsage, st
       walk(child.id)
     }
   }
-  const roots = rows.filter((row) => row.parentId === undefined).sort(newestFirst)
+  const roots = rows.filter((row) => row.parentId === undefined)
+    .sort((left, right) => Number(right.deleted === true) - Number(left.deleted === true) || newestFirst(left, right))
   for (const root of roots) {
     if (emitted.has(root.id)) continue
     emitted.add(root.id)
@@ -1122,9 +1166,9 @@ async function gatherActivities(ctx, ids) {
  *
  * The result is the reachable family: a child is included when the lineage or a
  * catalog links it to the target, or to another child that is already included.
- * A Session whose parent header names an id outside the corpus is not reachable
- * this way, yet it can still be a live fork of the target, so it is included too
- * — deleting it is no worse than deleting it through the fork's own row.
+ * A Session whose parent header names an id outside the corpus belongs to a
+ * family this target cannot see: it is deliberately left out here. Only the
+ * batch view may show such an orphan under its deleted parent, never a live root.
  * @param {object} ctx - Host Cordis context.
  * @param {string} sessionId - the Session whose descendants are wanted.
  * @param {string[]} warnings - collector for recoverable failures.
@@ -1165,7 +1209,6 @@ async function gatherDescendants(ctx, sessionId, warnings) {
 
   // 1. The header lineage every Session records, indexed by parent.
   const query = ctx.get('sessionQuery')
-  const known = new Set([sessionId])
   if (query === undefined || typeof query.listSessions !== 'function') {
     warnings.push('sessionQuery 服务不可用，派生对话与子智能体的血缘没有读到')
   } else {
@@ -1173,7 +1216,6 @@ async function gatherDescendants(ctx, sessionId, warnings) {
       for (const record of await query.listSessions()) {
         const header = record?.header
         if (header === undefined || typeof header.id !== 'string' || !SESSION_ID.test(header.id)) continue
-        known.add(header.id)
         const parent = typeof header.parentSession === 'string' ? header.parentSession : undefined
         if (parent === undefined) continue
         if (!childrenByParent.has(parent)) childrenByParent.set(parent, [])
@@ -1240,30 +1282,6 @@ async function gatherDescendants(ctx, sessionId, warnings) {
       }
     }
     frontier = next
-  }
-
-  // 5. A fork whose parent header names an id the corpus no longer holds, yet
-  //    which carries the target's own project directory: unreachable by structure,
-  //    still part of this family in practice.
-  try {
-    const root = ctx.get('sessionPersistence')
-    const rootHeader = root === undefined || typeof root.stat !== 'function'
-      ? undefined
-      : (await root.stat(sessionId))?.header
-    const rootCwd = typeof rootHeader?.cwd === 'string' ? rootHeader.cwd : undefined
-    if (rootCwd !== undefined) {
-      for (const [, list] of childrenByParent) {
-        for (const header of list) {
-          if (reachable.has(header.id) || header.cwd !== rootCwd) continue
-          const parent = typeof header.parentSession === 'string' ? header.parentSession : ''
-          if (known.has(parent)) continue
-          reachable.add(header.id)
-          add(header.id, 1, DESCENDANT_KINDS.derived, undefined, header.cwd)
-        }
-      }
-    }
-  } catch {
-    // An unreadable root header only costs the orphan fork, which is optional.
   }
 
   const list = [...collected.values()]
