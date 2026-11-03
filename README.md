@@ -16,7 +16,9 @@ decide what to remove.
   membership are cleared, and the projection-cache record is dropped. DSH's own archive only hides.
 - **The conversation family, as a tree.** A main conversation, its forked conversations and its
   subagents, nested by `parentSession` — a subagent that spawned its own subagent sits one level
-  deeper. Every node has a checkbox; ticking a parent takes its descendants.
+  deeper. In the single dialog a parent click selects only that node (blank until it is selected,
+  then green, yellow or red for itself / some descendants / the whole family), and the top
+  Select all box takes the whole family.
 - **Usage per conversation.** A node counts only the requests it made itself. A parent also shows
   `own/family`, the family total after a slash.
 - **Three-way token bar.** Cache-hit input (green), cache-miss input (blue), output (yellow), with the

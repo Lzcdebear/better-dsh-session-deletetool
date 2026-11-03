@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+**Single-conversation tree selection.**
+
+- A parent checkbox is blank unless the parent itself is selected; once selected it is green (only itself), yellow (some descendants) or red (the whole family). Applies to the main conversation and to any child with children.
+- The top Select all box is red only when every node in the family is selected; anything else is blank.
+- The bulk dialog keeps its click-to-select-family / double-click-to-select-self rule.
+- The bulk dialog drops its long paragraph; the stop note joins the usage switch, and the action buttons stay right-aligned.
+
 ## 0.6.4
 
 **An orphan fork no longer joins every family in its workspace.**

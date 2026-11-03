@@ -42,6 +42,8 @@ window.__ModuleLoader__.load({
         'icon.batch': '批量删除会话',
         'batch.title': '批量删除会话',
         'batch.desc': '按工作区分组列出每个会话的家族树：一行下面是它的子智能体与派生对话，可以逐层展开。勾选一行会连同它下面的一切一起删除；只勾某个子智能体，就只删它。删除不可撤销。',
+        'batch.tip': '提示：单击选择整个会话族，双击仅选择当前会话。',
+        'batch.orphanWarning': '删除主会话但保留子会话时，保留的子会话会失去父节点，之后在批量页显示在“已删除”占位父下。',
         'batch.loading': '正在读取会话列表…',
         'batch.failed': '读取失败',
         'batch.empty': '没有读到任何会话。',
@@ -119,6 +121,10 @@ window.__ModuleLoader__.load({
         'dialog.mainRow': '本对话：{title}',
         'dialog.selectAll': '删除全部（共 {n} 个）',
         'dialog.selectPartial': '已选 {m} / {n} 个',
+        'dialog.selectAllFamily': '全选',
+        'dialog.tip': '提示：单击仅选择当前会话；要选整个会话族，用上方的全选。',
+        'dialog.orphanWarning': '未选中的子会话不会被删除，但会与主会话断开，之后在批量页显示在“已删除”占位父下。',
+        'dialog.confirmNone': '请选择要删除的会话',
         'dialog.expandHint': '点分组标题可折叠',
         'dialog.truncated': '共 {n} 个，下面只列出前 {shown} 个。',
         'dialog.maxDeletable': '一次最多删除 {max} 个，请分批选择。',
@@ -156,6 +162,8 @@ window.__ModuleLoader__.load({
         'icon.batch': 'Delete conversations in bulk',
         'batch.title': 'Delete conversations in bulk',
         'batch.desc': 'Every conversation, grouped by Workspace. Under each row sit its subagents and its forked conversations, expandable level by level. Ticking a row takes everything below it; ticking a subagent alone deletes only that subagent. This cannot be undone.',
+        'batch.tip': 'Tip: click to select the whole family; double-click to select only this conversation.',
+        'batch.orphanWarning': 'Deleting a main conversation while keeping its children leaves them without a parent; they will appear under a “deleted” placeholder in the bulk view.',
         'batch.loading': 'Reading the conversation list…',
         'batch.failed': 'Could not read the list',
         'batch.empty': 'No conversation was found.',
@@ -233,6 +241,10 @@ window.__ModuleLoader__.load({
         'dialog.mainRow': 'This conversation: {title}',
         'dialog.selectAll': 'Delete all ({n})',
         'dialog.selectPartial': '{m} of {n} selected',
+        'dialog.selectAllFamily': 'Select all',
+        'dialog.tip': 'Tip: a click selects only this conversation; use Select all above for the whole family.',
+        'dialog.orphanWarning': 'Unselected children stay, but they lose their parent and later appear under a “deleted” placeholder in the bulk view.',
+        'dialog.confirmNone': 'Select the conversations to delete',
         'dialog.expandHint': 'Click a group title to collapse it',
         'dialog.truncated': 'There are {n}; only the first {shown} are listed.',
         'dialog.maxDeletable': 'At most {max} can be deleted at once — select in batches.',
@@ -775,7 +787,7 @@ window.__ModuleLoader__.load({
           (info) => {
             if (cancelled) return
             const items = Array.isArray(info?.descendants?.items) ? info.descendants.items : []
-            setSelected(new Set(items.map((item) => item.id)))
+            setSelected(new Set([request.sessionId, ...items.map((item) => item.id)]))
             setState({
               phase: 'ready',
               info,
@@ -811,12 +823,12 @@ window.__ModuleLoader__.load({
 
       const info = state.info
       const items = Array.isArray(info?.descendants?.items) ? info.descendants.items : []
-      const picked = selected ?? new Set(items.map((item) => item.id))
-      const selectedCount = items.filter((item) => picked.has(item.id)).length
+      const defaultSelected = new Set([request.sessionId, ...items.map((item) => item.id)])
+      const picked = selected ?? defaultSelected
 
       const toggleMany = (ids, on) => {
-        setSelected(() => {
-          const next = new Set(picked)
+        setSelected((previous) => {
+          const next = new Set(previous ?? defaultSelected)
           for (const id of ids) {
             if (on) next.add(id)
             else next.delete(id)
@@ -825,41 +837,63 @@ window.__ModuleLoader__.load({
         })
       }
 
+      /** Keep only this node selected: the double-click action on a parent row. */
+      const selectOnly = (id, ids) => {
+        setSelected((previous) => {
+          const next = new Set(previous ?? defaultSelected)
+          for (const id of ids) next.delete(id)
+          next.add(id)
+          return next
+        })
+      }
+
       const confirm = () => {
-        if (state.busy || state.phase !== 'ready') return
-        const chosen = items.filter((item) => picked.has(item.id)).map((item) => item.id)
+        if (state.busy || state.phase !== 'ready' || picked.size === 0) return
+        const mainSelected = picked.has(request.sessionId)
+        const descendantIds = items.filter((item) => picked.has(item.id)).map((item) => item.id)
         setState((previous) => ({ ...previous, busy: true, error: null }))
-        deleteSession(request.sessionId, state.stop, chosen).then(
-          () => {
-            settle()
-            setSelected(null)
-            setState(IDLE)
-          },
-          (reason) => {
-            // A Session that started working between the check and the write
-            // answers with its activity, so the next press stops it and the rows
-            // that are busy say so.
-            const active = Array.isArray(reason?.activeSessions) ? reason.activeSessions : null
-            setState((previous) => ({
-              ...previous,
-              busy: false,
-              error: reason instanceof Error ? reason.message : String(reason),
-              stop: previous.stop || reason?.code === 'session-active' || active !== null,
-              info: active === null ? previous.info : mergeActivity(previous.info, active),
-            }))
-          },
-        )
+        const finish = () => {
+          settle()
+          setSelected(null)
+          setState(IDLE)
+        }
+        const fail = (reason) => {
+          // A Session that started working between the check and the write
+          // answers with its activity, so the next press stops it and the rows
+          // that are busy say so.
+          const active = Array.isArray(reason?.activeSessions) ? reason.activeSessions : null
+          setState((previous) => ({
+            ...previous,
+            busy: false,
+            error: reason instanceof Error ? reason.message : String(reason),
+            stop: previous.stop || reason?.code === 'session-active' || active !== null,
+            info: active === null ? previous.info : mergeActivity(previous.info, active),
+          }))
+        }
+        if (mainSelected) {
+          deleteSession(request.sessionId, state.stop, descendantIds).then(finish, fail)
+          return
+        }
+        // Only children are ticked: use the batch route, which deletes exactly
+        // the chosen roots and leaves the main Session untouched.
+        const roots = selectedRootsOf(buildForest(items, request.sessionId), picked)
+        if (roots.length === 0) {
+          setState((previous) => ({ ...previous, busy: false }))
+          return
+        }
+        deleteBatch(roots, state.stop).then(finish, fail)
       }
 
       const title = request.title === undefined || request.title === '' ? t('dialog.untitled') : request.title
       const activity = activityOf(info)
       const checking = state.phase === 'checking'
-      const deletedCount = selectedCount + 1
       const confirmLabel = state.busy || checking
         ? (checking ? t('dialog.checking') : t('dialog.deleting'))
-        : state.stop
-          ? t('dialog.confirmStopCount', { n: deletedCount })
-          : t('dialog.confirmCount', { n: deletedCount })
+        : picked.size === 0
+          ? t('dialog.confirmNone')
+          : state.stop
+            ? t('dialog.confirmStopCount', { n: picked.size })
+            : t('dialog.confirmCount', { n: picked.size })
 
       return h('div', {
         className: 'dsd-overlay',
@@ -908,6 +942,7 @@ window.__ModuleLoader__.load({
               openError: folderError,
             }),
           h('p', { className: 'dsd-desc', key: 'desc', children: t('dialog.desc', { title }) }),
+          h('p', { className: 'dsd-tip', key: 'tip', children: t('dialog.tip') }),
           activity.length === 0
             ? null
             : h('div', { className: 'dsd-note dsd-warn', key: 'running' }, [
@@ -933,6 +968,7 @@ window.__ModuleLoader__.load({
             main: title,
             selected: picked,
             onToggle: toggleMany,
+            onSelectOnly: selectOnly,
             collapsed,
             setCollapsed,
             disabled: state.busy,
@@ -944,6 +980,9 @@ window.__ModuleLoader__.load({
             usageDisabled: info?.usage?.disabled === true,
             leafName: t('dialog.untitledItem'),
           }),
+          picked.has(request.sessionId) && items.some((item) => !picked.has(item.id))
+            ? h('p', { className: 'dsd-note dsd-warnNote', key: 'orphan', children: t('dialog.orphanWarning') })
+            : null,
           info?.descendants?.truncated === true
             ? h('p', {
               className: 'dsd-note dsd-hint',
@@ -982,7 +1021,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'dsd-button dsd-solid dsd-danger',
               key: 'confirm',
-              disabled: state.busy || checking,
+              disabled: state.busy || checking || picked.size === 0,
               onClick: confirm,
               children: confirmLabel,
             }),
@@ -1340,6 +1379,129 @@ window.__ModuleLoader__.load({
       return ids
     }
 
+    /** Whether this node and every descendant are selected. */
+    function fullySelected(node, selected) {
+      if (!selected.has(node.id)) return false
+      return node.children.every((child) => fullySelected(child, selected))
+    }
+
+    /** Whether this node or any descendant is selected. */
+    function subtreeHasSelection(node, selected) {
+      if (selected.has(node.id)) return true
+      return node.children.some((child) => subtreeHasSelection(child, selected))
+    }
+
+    /**
+     * How a node's subtree reads: all (red), partial (yellow), self (green),
+     * none (grey). A leaf only ever reports self or none. A parent reports all
+     * only when it and every descendant are selected, self only when it alone
+     * is selected, and partial for every other mixture.
+     */
+    function selectionStateOf(node, selected) {
+      const self = selected.has(node.id)
+      if (node.children.length === 0) return self ? 'self' : 'none'
+      if (fullySelected(node, selected)) return 'all'
+      if (!subtreeHasSelection(node, selected)) return 'none'
+      if (self && !node.children.some((child) => subtreeHasSelection(child, selected))) return 'self'
+      return 'partial'
+    }
+
+    /**
+     * The single-conversation tree reads a parent as blank whenever the parent
+     * itself is not selected, even if some of its children are. Once the parent
+     * is selected, its box reports green (only itself), yellow (some
+     * descendants), or red (every descendant). The top Select all box follows
+     * the same rule: red only when every node in the family is selected.
+     */
+    function singleStateOf(node, selected) {
+      const self = selected.has(node.id)
+      if (!self) return 'none'
+      if (node.children.length === 0) return 'self'
+      if (fullySelected(node, selected)) return 'all'
+      if (node.children.some((child) => subtreeHasSelection(child, selected))) return 'partial'
+      return 'self'
+    }
+
+    /**
+     * The delete body for a selection: every chosen node whose parent is not
+     * chosen becomes a root, carrying exactly the chosen ids below it. Nothing
+     * is inferred from a visual state; `chosen` is the explicit selection.
+     */
+    function selectedRootsOf(roots, chosen) {
+      const out = []
+      const collect = (node, underChosen) => {
+        const on = chosen.has(node.id)
+        if (on && !underChosen) {
+          out.push({
+            sessionId: node.id,
+            descendants: subtreeIds(node).filter((id) => id !== node.id && chosen.has(id)),
+          })
+        }
+        for (const child of node.children) collect(child, underChosen || on)
+      }
+      for (const root of roots) collect(root, false)
+      return out
+    }
+
+    /**
+     * Tell a double click from two singles. A single click runs after a short
+     * window; a second click on the same node cancels it and the double click
+     * runs instead, so the state never flickers through two single toggles.
+     * Timers are keyed by node id, so a quick click on another row still runs.
+     */
+    function useDeferredToggle() {
+      const timers = useRef(new Map())
+      useEffect(() => () => {
+        for (const timer of timers.current.values()) clearTimeout(timer)
+        timers.current.clear()
+      }, [])
+      const single = (id, action) => {
+        const previous = timers.current.get(id)
+        if (previous !== undefined) clearTimeout(previous)
+        const timer = setTimeout(() => {
+          timers.current.delete(id)
+          action()
+        }, 260)
+        timers.current.set(id, timer)
+      }
+      const double = (id, action) => {
+        const previous = timers.current.get(id)
+        if (previous !== undefined) {
+          clearTimeout(previous)
+          timers.current.delete(id)
+        }
+        action()
+      }
+      return { single, double }
+    }
+
+    /**
+     * The four-state selection control both trees draw. It is a button rather
+     * than a native checkbox because a checkbox cannot show four colours: grey
+     * none, red all, yellow partial, green self.
+     */
+    function SelectionBox(props) {
+      const { state = 'none', disabled = false, onClick, onDoubleClick, title } = props
+      return h('button', {
+        type: 'button',
+        className: `dsd-checkBox dsd-checkBox-${state}`,
+        role: 'checkbox',
+        'aria-checked': state === 'partial' ? 'mixed' : state === 'none' ? 'false' : 'true',
+        disabled,
+        title,
+        onClick: (event) => {
+          event.preventDefault()
+          if (onClick !== undefined) onClick(event)
+        },
+        onDoubleClick: (event) => {
+          event.preventDefault()
+          if (onDoubleClick !== undefined) onDoubleClick(event)
+        },
+      }, state === 'none'
+        ? null
+        : h('span', { className: 'dsd-checkMark', 'aria-hidden': true, children: state === 'partial' ? '–' : '✓' }))
+    }
+
     /**
      * The family tree both dialogs draw.
      *
@@ -1356,37 +1518,47 @@ window.__ModuleLoader__.load({
      * @param {object} props - the family, the selection, and the drawing callbacks.
      */
     function FamilyTree(props) {
-      const { items, implicitParent, main, selected, onToggle, collapsed, setCollapsed, disabled, leafName } = props
+      const { items, implicitParent, main, selected, onToggle, onSelectOnly, collapsed, setCollapsed, disabled, leafName } = props
       const forest = buildForest(items, implicitParent === undefined ? null : implicitParent)
+      const selectedRef = useRef(selected)
+      selectedRef.current = selected
+      const hasMain = main !== null && main !== undefined && implicitParent !== undefined && implicitParent !== null
+      const mainNode = hasMain
+        ? { id: implicitParent, entry: { id: implicitParent, title: main, kind: 'root' }, children: forest }
+        : undefined
+      const allIds = mainNode === undefined ? items.map((entry) => entry.id) : subtreeIds(mainNode)
 
-      /** A set of ids read as a checkbox state. */
-      const stateOf = (ids) => {
-        // An empty set is a row that covers nothing beyond itself: a main
-        // conversation with no children at all. It is still deleted with the
-        // row, so it reads as ticked instead of as an impossible choice.
-        let on = true
-        let some = false
-        for (const id of ids) {
-          if (selected.has(id)) some = true
-          else on = false
+      /** A click selects only this node; the whole-family box above takes the rest. */
+      const toggleOnly = (node) => {
+        const current = selectedRef.current
+        const state = singleStateOf(node, current)
+        if (node.children.length === 0) {
+          onToggle([node.id], state === 'none')
+          return
         }
-        return { on, partial: some && !on }
+        if (state === 'self') onToggle([node.id], false)
+        else onSelectOnly(node.id, subtreeIds(node))
       }
 
-      /** One checkbox: ticked when every id it covers is ticked, mixed when only some are. */
-      const box = (ids) => {
-        const state = stateOf(ids)
-        return h('input', {
-          type: 'checkbox',
-          key: 'box',
-          className: 'dsd-check',
-          checked: state.on,
-          disabled: disabled === true,
-          ref: (input) => {
-            if (input !== null) input.indeterminate = state.partial
-          },
-          onChange: () => onToggle(ids, !state.on),
-        })
+      /** The single-conversation box of one node: blank unless the node itself is selected. */
+      const boxFor = (node) => h(SelectionBox, {
+        key: 'box',
+        state: singleStateOf(node, selected),
+        disabled: disabled === true,
+        onClick: () => {
+          if (disabled === true) return
+          toggleOnly(node)
+        },
+      })
+
+      /** The whole-family box is red only when every node is selected; anything else is blank. */
+      const allState = allIds.length > 0 && allIds.every((id) => selected.has(id)) ? 'all' : 'none'
+
+      const toggleAll = () => {
+        const current = selectedRef.current
+        const all = allIds.every((id) => current.has(id))
+        if (all) onToggle(allIds, false)
+        else onToggle(allIds, true)
       }
 
       /** The caret of one row or block, or the empty column a leaf keeps. */
@@ -1396,7 +1568,11 @@ window.__ModuleLoader__.load({
           key: 'caret',
           className: 'dsd-caret',
           'aria-expanded': !isCollapsed,
-          onClick: () => setCollapsed((previous) => ({ ...previous, [collapseKey]: !isCollapsed })),
+          onClick: (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            setCollapsed((previous) => ({ ...previous, [collapseKey]: !isCollapsed }))
+          },
           children: isCollapsed ? '▸' : '▾',
         })
         : h('span', { className: 'dsd-caret dsd-caretLeaf', key: 'caret', 'aria-hidden': true }))
@@ -1480,8 +1656,8 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'dsd-branch', key }, [
           h('div', { className: 'dsd-node', key: 'row' }, [
             caret(node.id, hasChildren, isCollapsed),
+            boxFor(node),
             h('label', { className: 'dsd-nodeLabel', key: 'label' }, [
-              box(subtreeIds(node)),
               h('span', { className: 'dsd-rowIcon', key: 'glyph', children: treeGlyph(glyphName, 14) }),
               h('span', { className: 'dsd-rowText', key: 'text' }, [
                 h('span', {
@@ -1502,15 +1678,27 @@ window.__ModuleLoader__.load({
         ])
       }
 
-      const mainIds = items.map((entry) => entry.id)
-      const hasMain = main !== null && main !== undefined
       const mainCollapsed = collapsed['__main__'] === true
       return h('div', { className: 'dsd-tree' }, [
         hasMain
+          ? h('div', { className: 'dsd-selectAll', key: 'selectAll' }, [
+            h(SelectionBox, {
+              key: 'box',
+              state: allState,
+              disabled: disabled === true,
+              onClick: () => {
+                if (disabled === true) return
+                toggleAll()
+              },
+            }),
+            h('span', { key: 'label', children: t('dialog.selectAllFamily') }),
+          ])
+          : null,
+        hasMain
           ? h('div', { className: 'dsd-node dsd-nodeMain', key: 'main' }, [
             caret('__main__', forest.length > 0, mainCollapsed),
+            boxFor(mainNode),
             h('label', { className: 'dsd-nodeLabel', key: 'label' }, [
-              box(mainIds),
               h('span', { className: 'dsd-rowIcon', key: 'glyph', children: treeGlyph('session', 14) }),
               h('span', { className: 'dsd-rowText', key: 'text' }, [
                 h('span', {
@@ -1574,6 +1762,10 @@ window.__ModuleLoader__.load({
       const [openingCache, setOpeningCache] = useState(false)
       const usageOn = useSyncExternalStore(subscribeUsage, getUsageEnabled)
       const dialog = useRef(null)
+      const { single, double } = useDeferredToggle()
+      const picked = selected ?? new Set()
+      const pickedRef = useRef(picked)
+      pickedRef.current = picked
 
       const close = useCallback(() => {
         setState((previous) => (previous.busy
@@ -1638,7 +1830,6 @@ window.__ModuleLoader__.load({
       const catalog = state.catalog
       const summary = catalog?.summary ?? null
       const busy = state.busy
-      const picked = selected ?? new Set()
 
       const flatRows = React.useMemo(() => {
         const out = []
@@ -1658,7 +1849,7 @@ window.__ModuleLoader__.load({
       // The family forest used for drawing: a fork is a root of its own, a
       // subagent hangs under whatever spawned it.
       const forest = React.useMemo(() => {
-        const byId = new Map(flatRows.map((entry) => [entry.id, { entry, children: [] }]))
+        const byId = new Map(flatRows.map((entry) => [entry.id, { id: entry.id, entry, children: [] }]))
         const roots = []
         for (const node of byId.values()) {
           const parentId = node.entry.parentId
@@ -1736,7 +1927,7 @@ window.__ModuleLoader__.load({
       const walk = (node, depth) => {
         if (!hasMatch(node)) return
         visible.push({ node, depth })
-        const isOpen = depth <= 1 || expanded[node.entry.id] === true
+        const isOpen = expanded[node.entry.id] !== undefined ? expanded[node.entry.id] : depth <= 1
         if (!isOpen) return
         for (const child of [...node.children].sort(compare)) walk(child, depth + 1)
       }
@@ -1744,7 +1935,7 @@ window.__ModuleLoader__.load({
 
       /** One nested family branch, drawn as the same tree the single dialog uses. */
       const drawBranch = (node, depth) => {
-        const isOpen = depth <= 1 || expanded[node.entry.id] === true
+        const isOpen = expanded[node.entry.id] !== undefined ? expanded[node.entry.id] : depth <= 1
         const children = [...node.children].sort(compare).filter(hasMatch)
         return h('div', { className: 'dsd-branch', key: node.entry.id }, [
           row({ node, depth }),
@@ -1764,8 +1955,8 @@ window.__ModuleLoader__.load({
       const allVisibleChosen = selectableIds.length > 0 && chosenVisible === selectableIds.length
 
       const setMany = (ids, on) => {
-        setSelected(() => {
-          const next = new Set(picked)
+        setSelected((previous) => {
+          const next = new Set(previous ?? new Set())
           for (const id of ids) {
             if (on) next.add(id)
             else next.delete(id)
@@ -1774,14 +1965,40 @@ window.__ModuleLoader__.load({
         })
       }
 
-      const toggleNode = (node, on) => {
-        if (node.entry.stale === true || node.entry.deleted === true) return
-        const ids = [node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)]
-        setMany(ids, on)
+      const selectOnly = (id, ids) => {
+        setSelected((previous) => {
+          const next = new Set(previous ?? new Set())
+          for (const x of ids) next.delete(x)
+          next.add(id)
+          return next
+        })
       }
 
-      const toggleExpand = (id) => {
-        setExpanded((previous) => ({ ...previous, [id]: previous[id] !== true }))
+      const toggleNode = (node) => {
+        if (node.entry.stale === true || node.entry.deleted === true) return
+        const ids = [node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)]
+        const state = selectionStateOf(node, pickedRef.current)
+        if (node.children.length > 0) {
+          if (state === 'all') setMany(ids, false)
+          else setMany(ids, true)
+        } else {
+          setMany([node.entry.id], state === 'none')
+        }
+      }
+
+      const toggleOnly = (node) => {
+        if (node.entry.stale === true || node.entry.deleted === true) return
+        const state = selectionStateOf(node, pickedRef.current)
+        if (node.children.length === 0) {
+          setMany([node.entry.id], state === 'none')
+          return
+        }
+        if (state === 'self') setMany([node.entry.id], false)
+        else selectOnly(node.entry.id, [node.entry.id, ...descendantsOf(node).map((child) => child.entry.id)])
+      }
+
+      const toggleExpand = (id, nextOpen) => {
+        setExpanded((previous) => ({ ...previous, [id]: nextOpen }))
       }
 
       /** The batch body: each ticked root carries the descendants also ticked. */
@@ -1865,7 +2082,7 @@ window.__ModuleLoader__.load({
       const row = ({ node, depth }) => {
         const entry = node.entry
         const id = entry.id
-        const isCollapsed = expanded[id] !== true
+        const isOpen = expanded[id] !== undefined ? expanded[id] : depth <= 1
         const hasChildren = node.children.length > 0
         const usage = entry.usage
         const usageOff = usage?.disabled === true
@@ -1886,19 +2103,28 @@ window.__ModuleLoader__.load({
             className: `dsd-caret${hasChildren ? '' : ' dsd-caretLeaf'}`,
             key: 'caret',
             disabled: !hasChildren,
-            'aria-expanded': hasChildren ? !isCollapsed : undefined,
-            'aria-label': isCollapsed ? '展开' : '收起',
-            onClick: () => toggleExpand(id),
-            children: hasChildren ? (isCollapsed ? '▸' : '▾') : '',
+            'aria-expanded': hasChildren ? isOpen : undefined,
+            'aria-label': isOpen ? '收起' : '展开',
+            onClick: (event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              if (hasChildren) toggleExpand(id, !isOpen)
+            },
+            children: hasChildren ? (isOpen ? '▾' : '▸') : '',
           }),
-          h('input', {
-            type: 'checkbox',
+          h(SelectionBox, {
             key: 'box',
-            className: 'dsd-check',
-            checked: picked.has(id) && !stale && !deleted,
+            state: stale || deleted ? 'none' : selectionStateOf(node, picked),
             disabled: busy || stale || deleted,
             title: deleted ? '这个父会话已经被删除，只作为结构显示，不能选择。' : stale ? t('batch.staleHint') : undefined,
-            onChange: () => toggleNode(node, !picked.has(id)),
+            onClick: () => {
+              if (busy || stale || deleted) return
+              single(id, () => toggleNode(node))
+            },
+            onDoubleClick: () => {
+              if (busy || stale || deleted) return
+              double(id, () => toggleOnly(node))
+            },
           }),
           h('span', { className: 'dsd-rowIcon', key: 'icon', children: treeGlyph(glyphName, 14) }),
           h('div', { className: 'dsd-bulkName', key: 'name' }, [
@@ -2021,7 +2247,7 @@ window.__ModuleLoader__.load({
               summary.usageDisabled === true ? null : h(UsageLegend, { key: 'legend', usage: cacheUsage }),
             ]),
 
-          h('p', { className: 'dsd-desc', key: 'desc', children: t('batch.desc') }),
+          h('p', { className: 'dsd-tip', key: 'tip', children: t('batch.tip') }),
           summary !== null && (summary.stale ?? 0) > 0
             ? h('p', { className: 'dsd-noteHint', key: 'staleNote', children: t('batch.staleCount', { n: summary.stale }) })
             : null,
@@ -2106,6 +2332,11 @@ window.__ModuleLoader__.load({
               drawBranch(root, 0),
             ]))),
 
+          forest.roots.some((root) => picked.has(root.entry.id)
+            && descendantsOf(root).some((child) => !picked.has(child.entry.id)))
+            ? h('p', { className: 'dsd-note dsd-warnNote', key: 'orphan', children: t('batch.orphanWarning') })
+            : null,
+
           totalPages > 1
             ? h('div', { className: 'dsd-bulkPager', key: 'pager' }, [
               h('button', {
@@ -2147,8 +2378,6 @@ window.__ModuleLoader__.load({
                 ],
               }),
               h(UsageSwitch, { key: 'usage', compact: true }),
-            ]),
-            h('div', { className: 'dsd-bulkRight', key: 'right' }, [
               h('label', { className: 'dsd-row dsd-stopRow dsd-bulkStop', key: 'stop' }, [
                 h('input', {
                   type: 'checkbox',
@@ -2160,6 +2389,8 @@ window.__ModuleLoader__.load({
                 }),
                 h('span', { className: 'dsd-rowText', key: 'text', children: t('batch.stoppingNote') }),
               ]),
+            ]),
+            h('div', { className: 'dsd-bulkRight', key: 'right' }, [
               h('button', {
                 type: 'button',
                 className: 'dsd-button dsd-outline',
@@ -2372,6 +2603,20 @@ window.__ModuleLoader__.load({
 .dsd-folder{width:22px;height:22px}
 .dsd-caret{width:18px;height:18px;font-size:10px}
 .dsd-check{width:13px;height:13px}
+/* The four-state tree checkbox: grey none, red all, yellow partial, green self.
+   A native checkbox cannot carry four colours, so each state is a class. */
+.dsd-checkBox{flex:none;box-sizing:border-box;width:15px;height:15px;margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;border:1.5px solid var(--dsw-alias-label-tertiary,#8b909a);border-radius:4px;background:transparent;cursor:pointer;font:inherit;color:#fff;line-height:1}
+.dsd-checkBox:hover:not(:disabled){border-color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-checkBox:disabled{opacity:.45;cursor:not-allowed}
+.dsd-checkBox:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4a8cff));outline-offset:1px}
+.dsd-checkBox-all{background:#e5484d;border-color:#e5484d}
+.dsd-checkBox-partial{background:#d9a03a;border-color:#d9a03a}
+.dsd-checkBox-self{background:#30a46c;border-color:#30a46c}
+.dsd-checkMark{font-size:10px;line-height:1;font-weight:700}
+.dsd-tip{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8b909a)}
+.dsd-warnNote{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-primary,#d9a03a)}
+.dsd-selectAll{display:flex;align-items:center;gap:7px;padding:3px 6px 5px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-nodeLabel{user-select:none}
 /* 概览卡收紧：图标 12px、指标一行放下四格，卡片与对话框间距同步缩小 */
 .dsd-card{padding:12px 14px;gap:8px;border-radius:14px}
 .dsd-cardSummary{gap:10px}
@@ -2407,8 +2652,8 @@ window.__ModuleLoader__.load({
 .dsd-bulkTime{flex:none;width:112px;text-align:right;font-size:11px;color:var(--dsw-alias-label-tertiary,#8b909a);font-variant-numeric:tabular-nums;white-space:nowrap}
 .dsd-bulkPager{display:flex;align-items:center;justify-content:center;gap:10px;font-size:12px;color:var(--dsw-alias-label-secondary,#a8adb7)}
 .dsd-bulkFooter{flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding-top:8px;border-top:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18))}
-.dsd-bulkLeft{display:flex;align-items:center;gap:8px;margin-inline-end:auto}
-.dsd-bulkRight{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.dsd-bulkLeft{display:flex;align-items:center;gap:8px;margin-inline-end:auto;flex-wrap:wrap}
+.dsd-bulkRight{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-inline-start:auto}
 .dsd-bulkFooter .dsd-stopRow{flex:0 1 auto}
 .dsd-bulkStop .dsd-rowText{font-size:11.5px}
 .dsd-btnSm{height:28px;padding:0 9px;font-size:12px;line-height:18px;gap:5px}
