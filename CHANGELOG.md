@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.3
+
+**Bulk usage card folds.**
+
+- The bulk dialog's usage card has a collapse button in its header. Folded, it becomes one row reading “展开显示用量统计”; clicking the row expands it again.
+- The folded state is stored in `localStorage` and survives a page refresh or reopening the dialog.
+- Folding frees the card's height for the conversation list.
+
 ## 0.7.2
 
 **Bulk double-click.**

@@ -66,6 +66,9 @@ window.__ModuleLoader__.load({
         'batch.stoppingNote': '确认后会先停掉这些会话里未结束的工作，再删除。',
         'batch.unknown': '读不到整个会话列表，仍可直接删除。',
         'batch.totalSessions': '会话总数',
+        'batch.summaryTitle': '会话用量',
+        'batch.collapseSummary': '收起用量统计',
+        'batch.expandSummary': '展开显示用量统计',
         'batch.search': '按名称搜索',
         'batch.sort': '排序方式',
         'batch.sortRecent': '按最后活跃时间',
@@ -186,6 +189,9 @@ window.__ModuleLoader__.load({
         'batch.stoppingNote': 'Confirming stops the unfinished work in these conversations first, then deletes them.',
         'batch.unknown': 'The whole conversation list could not be read; deleting is still possible.',
         'batch.totalSessions': 'Conversations',
+        'batch.summaryTitle': 'Conversation usage',
+        'batch.collapseSummary': 'Collapse usage',
+        'batch.expandSummary': 'Show usage',
         'batch.search': 'Search by name',
         'batch.sort': 'Sort by',
         'batch.sortRecent': 'Last active',
@@ -368,6 +374,25 @@ window.__ModuleLoader__.load({
         // A storage-less shell still honours the switch for this page.
       }
       for (const listener of [...usageListeners]) listener()
+    }
+
+    // ---- whether the bulk usage card is folded ---------------------------
+    // Kept next to the usage switch: both are page-level preferences, and a
+    // storage-less shell simply falls back to the expanded card.
+    const SUMMARY_KEY = 'better-dsh-session-deletetool:summary-collapsed'
+    function readSummaryCollapsed() {
+      try {
+        return window.localStorage.getItem(SUMMARY_KEY) === '1'
+      } catch {
+        return false
+      }
+    }
+    function writeSummaryCollapsed(next) {
+      try {
+        window.localStorage.setItem(SUMMARY_KEY, next ? '1' : '0')
+      } catch {
+        // The dialog still folds for this page when storage is unavailable.
+      }
     }
 
     /** One failed Host answer, carrying its stable code and details. */
@@ -1753,6 +1778,7 @@ window.__ModuleLoader__.load({
       const [confirmAll, setConfirmAll] = useState(false)
       const [cacheError, setCacheError] = useState(null)
       const [openingCache, setOpeningCache] = useState(false)
+      const [summaryCollapsed, setSummaryCollapsed] = useState(readSummaryCollapsed)
       const usageOn = useSyncExternalStore(subscribeUsage, getUsageEnabled)
       const dialog = useRef(null)
       const { single, double } = useDeferredToggle()
@@ -2207,34 +2233,56 @@ window.__ModuleLoader__.load({
           // The corpus card: one fold per Session, summed once.
           summary === null
             ? null
-            : h('section', { className: 'dsd-card dsd-cardSummary', key: 'corpus' }, [
-              h('div', { className: 'dsd-metrics', key: 'metrics' }, [
-                h(Metric, {
-                  key: 'count',
-                  glyph: treeGlyph('session', 12),
-                  label: t('batch.totalSessions'),
-                  value: String(summary.sessions ?? 0),
-                }),
-                h(Metric, {
-                  key: 'tokens',
-                  glyph: tokensGlyph(12),
-                  tone: 'dsd-toneBlue',
-                  label: t('dialog.totalTokens'),
-                  value: summary.usageDisabled === true ? t('usage.off') : `${formatTokens(summary.tokens ?? 0)} ${t('dialog.tokensUnit')}`,
-                }),
-                h(Metric, {
-                  key: 'hit',
-                  glyph: cacheGlyph(12),
-                  tone: 'dsd-toneGreen',
-                  label: t('dialog.hitRate'),
-                  value: summary.usageDisabled === true ? t('usage.off') : formatPercent(summary.hitRate ?? 0),
-                }),
+            : summaryCollapsed
+              ? h('button', {
+                type: 'button',
+                className: 'dsd-summaryCollapsed',
+                key: 'corpus',
+                onClick: () => { setSummaryCollapsed(false); writeSummaryCollapsed(false) },
+              }, [
+                h('span', { className: 'dsd-summaryChevron', key: 'chevron', 'aria-hidden': true, children: '▸' }),
+                h('span', { key: 'label', children: t('batch.expandSummary') }),
+              ])
+              : h('section', { className: 'dsd-card dsd-cardSummary', key: 'corpus' }, [
+                h('div', { className: 'dsd-summaryHead', key: 'head' }, [
+                  h('span', { className: 'dsd-summaryTitle', key: 'title', children: t('batch.summaryTitle') }),
+                  h('button', {
+                    type: 'button',
+                    className: 'dsd-summaryCollapse',
+                    key: 'collapse',
+                    onClick: () => { setSummaryCollapsed(true); writeSummaryCollapsed(true) },
+                  }, [
+                    h('span', { key: 'label', children: t('batch.collapseSummary') }),
+                    h('span', { className: 'dsd-summaryChevron', key: 'chevron', 'aria-hidden': true, children: '▾' }),
+                  ]),
+                ]),
+                h('div', { className: 'dsd-metrics', key: 'metrics' }, [
+                  h(Metric, {
+                    key: 'count',
+                    glyph: treeGlyph('session', 12),
+                    label: t('batch.totalSessions'),
+                    value: String(summary.sessions ?? 0),
+                  }),
+                  h(Metric, {
+                    key: 'tokens',
+                    glyph: tokensGlyph(12),
+                    tone: 'dsd-toneBlue',
+                    label: t('dialog.totalTokens'),
+                    value: summary.usageDisabled === true ? t('usage.off') : `${formatTokens(summary.tokens ?? 0)} ${t('dialog.tokensUnit')}`,
+                  }),
+                  h(Metric, {
+                    key: 'hit',
+                    glyph: cacheGlyph(12),
+                    tone: 'dsd-toneGreen',
+                    label: t('dialog.hitRate'),
+                    value: summary.usageDisabled === true ? t('usage.off') : formatPercent(summary.hitRate ?? 0),
+                  }),
+                ]),
+                summary.usageDisabled === true
+                  ? h('p', { className: 'dsd-noteHint', key: 'usageOff', children: t('usage.offHint') })
+                  : h(UsageBar, { key: 'bar', usage: cacheUsage }),
+                summary.usageDisabled === true ? null : h(UsageLegend, { key: 'legend', usage: cacheUsage }),
               ]),
-              summary.usageDisabled === true
-                ? h('p', { className: 'dsd-noteHint', key: 'usageOff', children: t('usage.offHint') })
-                : h(UsageBar, { key: 'bar', usage: cacheUsage }),
-              summary.usageDisabled === true ? null : h(UsageLegend, { key: 'legend', usage: cacheUsage }),
-            ]),
 
           h('p', { className: 'dsd-tip', key: 'tip', children: t('batch.tip') }),
           summary !== null && (summary.stale ?? 0) > 0
@@ -2534,6 +2582,15 @@ window.__ModuleLoader__.load({
 .dsd-close:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4a8cff));outline-offset:-2px}
 .dsd-card{box-sizing:border-box;display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:16px;border:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18));background:var(--dsw-alias-bg-layer-1,#f7f8fa)}
 .dsd-cardSummary{gap:12px}
+/* The bulk usage card folds to one row. The button sits in its header; the
+   folded row leaves the list the room the card used to take. */
+.dsd-summaryHead{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.dsd-summaryTitle{font-size:12.5px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-secondary,#a8adb7)}
+.dsd-summaryCollapse{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px;border:.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.32));border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,#a8adb7);font:inherit;font-size:11.5px;line-height:16px;cursor:pointer}
+.dsd-summaryCollapse:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dsd-summaryCollapsed{display:flex;align-items:center;gap:6px;width:100%;min-height:32px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18));border-radius:10px;background:var(--dsw-alias-bg-layer-1,#f7f8fa);color:var(--dsw-alias-label-secondary,#a8adb7);font:inherit;font-size:12px;line-height:18px;cursor:pointer;text-align:left}
+.dsd-summaryCollapsed:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.12))}
+.dsd-summaryChevron{font-size:10px;line-height:1}
 .dsd-cardHead{display:flex;align-items:center;gap:10px;min-width:0}
 .dsd-avatar{flex:none;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;background:var(--dsw-alias-state-business-bg,rgba(74,140,255,.12));color:var(--dsw-alias-state-business-primary,#4a8cff)}
 .dsd-cardTitle{margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;line-height:22px;font-weight:600;color:var(--dsw-alias-label-primary,#e6e6e6)}
