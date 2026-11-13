@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.4
+
+**Archived conversations are marked in the bulk dialog.**
+
+- Each row whose Session is archived shows a small grey “（已归档）” under its token count, so a conversation that still owns its slot but is hidden from the live list can be read at a glance before it is picked.
+- The kind filter gains “已归档” and “未归档” beside the existing main / forked / subagent choices; they combine with the Workspace and text filters as before.
+- Nothing about deletion changes: archived rows are marked, not removed.
+
 ## 0.7.3
 
 **Bulk usage card folds.**

@@ -79,6 +79,9 @@ window.__ModuleLoader__.load({
         'batch.kindRoot': '主会话',
         'batch.kindDerived': 'Fork 子会话',
         'batch.kindSubagent': '子智能体',
+        'batch.kindArchived': '已归档',
+        'batch.kindUnarchived': '未归档',
+        'batch.archivedTag': '（已归档）',
         'batch.filterWorkspace': '按工作区筛选',
         'batch.filterAllWorkspaces': '全部工作区',
         'batch.selectPage': '全选本页（{n}）',
@@ -202,6 +205,9 @@ window.__ModuleLoader__.load({
         'batch.kindRoot': 'Main conversation',
         'batch.kindDerived': 'Forked conversation',
         'batch.kindSubagent': 'Subagent',
+        'batch.kindArchived': 'Archived',
+        'batch.kindUnarchived': 'Not archived',
+        'batch.archivedTag': '(Archived)',
         'batch.filterWorkspace': 'Filter by Workspace',
         'batch.filterAllWorkspaces': 'All Workspaces',
         'batch.selectPage': 'Select this page ({n})',
@@ -1909,7 +1915,12 @@ window.__ModuleLoader__.load({
       }
 
       const needle = query.trim().toLowerCase()
-      const kindOk = (entry) => kindFilter === 'all' || entry.kind === kindFilter
+      const kindOk = (entry) => {
+        if (kindFilter === 'all') return true
+        if (kindFilter === 'archived') return entry.archived === true
+        if (kindFilter === 'unarchived') return entry.archived !== true
+        return entry.kind === kindFilter
+      }
       const workspaceOk = (entry) => workspaceFilter === 'all' || String(entry.workspaceId ?? '') === workspaceFilter
       const textOk = (entry) => needle === '' || String(entry.title ?? '').toLowerCase().includes(needle)
       const selfOk = (entry) => kindOk(entry) && workspaceOk(entry) && textOk(entry)
@@ -2157,16 +2168,21 @@ window.__ModuleLoader__.load({
                   ? h('span', { className: 'dsd-bulkOwner', key: 'owner', children: `所属：${parent.entry.title ?? t('batch.untitled')}` })
                   : null,
           ]),
-          h('span', {
-            className: 'dsd-bulkTokens',
-            key: 'tokens',
-            title: usageOff
-              ? t('usage.offHint')
-              : hasBranch ? `本会话自身：${formatTokens(own)}\n会话家族：${formatTokens(branch)}` : `本会话自身：${formatTokens(own)}`,
-            children: usageOff
-              ? t('usage.off')
-              : hasBranch ? `${formatTokens(own)}/${formatTokens(branch)}` : formatTokens(own),
-          }),
+          h('div', { className: 'dsd-bulkUsage', key: 'tokens' }, [
+            h('span', {
+              className: 'dsd-bulkTokens',
+              key: 'tokens',
+              title: usageOff
+                ? t('usage.offHint')
+                : hasBranch ? `本会话自身：${formatTokens(own)}\n会话家族：${formatTokens(branch)}` : `本会话自身：${formatTokens(own)}`,
+              children: usageOff
+                ? t('usage.off')
+                : hasBranch ? `${formatTokens(own)}/${formatTokens(branch)}` : formatTokens(own),
+            }),
+            entry.archived === true
+              ? h('span', { className: 'dsd-bulkArchived', key: 'archived', children: t('batch.archivedTag') })
+              : null,
+          ]),
           h('span', {
             className: 'dsd-bulkTime',
             key: 'time',
@@ -2319,6 +2335,8 @@ window.__ModuleLoader__.load({
               onChange: (event) => { setKindFilter(event.target.value); setPage(0) },
             }, [
               h('option', { key: 'all', value: 'all', children: t('batch.filterAllKinds') }),
+              h('option', { key: 'archived', value: 'archived', children: t('batch.kindArchived') }),
+              h('option', { key: 'unarchived', value: 'unarchived', children: t('batch.kindUnarchived') }),
               h('option', { key: 'root', value: 'root', children: t('batch.kindRoot') }),
               h('option', { key: 'derived', value: 'derived', children: t('batch.kindDerived') }),
               h('option', { key: 'subagent', value: 'subagent', children: t('batch.kindSubagent') }),
@@ -2694,7 +2712,9 @@ window.__ModuleLoader__.load({
 .dsd-bulkName{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
 .dsd-bulkTitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--dsw-alias-label-primary,#e6e6e6)}
 .dsd-bulkOwner{font-size:10.5px;color:var(--dsw-alias-label-tertiary,#8b909a);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsd-bulkUsage{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:1px}
 .dsd-bulkTokens{flex:none;font-size:11.5px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary,#a8adb7);white-space:nowrap}
+.dsd-bulkArchived{font-size:10px;line-height:1.25;color:var(--dsw-alias-label-tertiary,#8b909a);white-space:nowrap}
 .dsd-bulkTime{flex:none;width:112px;text-align:right;font-size:11px;color:var(--dsw-alias-label-tertiary,#8b909a);font-variant-numeric:tabular-nums;white-space:nowrap}
 .dsd-bulkPager{display:flex;align-items:center;justify-content:center;gap:10px;font-size:12px;color:var(--dsw-alias-label-secondary,#a8adb7)}
 .dsd-bulkFooter{flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding-top:8px;border-top:.5px solid var(--dsw-alias-border-l1,rgba(127,127,127,.18))}

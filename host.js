@@ -599,6 +599,14 @@ async function buildCatalog(ctx, options = {}) {
   const corpus = withUsage ? summarizeCorpus(headers, stats) : null
 
   const registry = ctx.get('workspaceRegistry')
+  // The registry-global archive set rides alongside the Workspace accounts: an
+  // archived Session keeps its slot but is hidden from the live list, so the
+  // batch view marks the row instead of dropping it.
+  const archivedIds = new Set(
+    registry !== undefined && registry.archivedSessionIds !== undefined
+      ? Array.from(registry.archivedSessionIds, (id) => String(id))
+      : [],
+  )
   const workspaces = registry !== undefined && typeof registry.list === 'function' ? registry.list() : []
   const rank = new Map()
   /** Session id → owning Workspace id, taken from that Workspace's own account. */
@@ -634,7 +642,7 @@ async function buildCatalog(ctx, options = {}) {
       workspaceId: group.workspace === undefined ? null : String(group.workspace.id),
       title: group.workspace === undefined ? workspaceLabel(group.cwd) : String(group.workspace.title ?? ''),
       path: group.workspace === undefined ? String(group.cwd ?? '') : String(group.workspace.path ?? ''),
-      sessions: await catalogSessions(ctx, group.members, stats, directories, familyUsage, stored, withUsage, knownIds),
+      sessions: await catalogSessions(ctx, group.members, stats, directories, familyUsage, stored, withUsage, knownIds, archivedIds),
     })
   }
   sections.sort((left, right) => sectionRank(rank, left) - sectionRank(rank, right) || left.title.localeCompare(right.title))
@@ -646,7 +654,7 @@ async function buildCatalog(ctx, options = {}) {
       workspaceId: null,
       title: '未归类',
       path: '',
-      sessions: await catalogSessions(ctx, ungrouped.members, stats, directories, familyUsage, stored, withUsage, knownIds),
+      sessions: await catalogSessions(ctx, ungrouped.members, stats, directories, familyUsage, stored, withUsage, knownIds, archivedIds),
     })
   }
 
@@ -778,7 +786,7 @@ function summarizeCorpus(headers, stats) {
  * @param {Set<string>} knownIds - every listed Session id in the corpus.
  * @returns {Promise<object[]>} the rows, parents before their children.
  */
-async function catalogSessions(ctx, members, stats, directories, familyUsage, stored, withUsage = true, knownIds = new Set()) {
+async function catalogSessions(ctx, members, stats, directories, familyUsage, stored, withUsage = true, knownIds = new Set(), archivedIds = null) {
   const inGroup = new Set(members.map((header) => header.id))
   const childrenOf = new Map()
   /** Parent ids that no listed Session owns any more: deleted by hand. */
@@ -850,6 +858,7 @@ async function catalogSessions(ctx, members, stats, directories, familyUsage, st
       activity,
       usage: withUsage ? usagePayload(stats?.get(header.id)) : { disabled: true },
       ...(stored !== undefined && stored.get(header.id) === false ? { stale: true } : {}),
+      ...(archivedIds instanceof Set && archivedIds.has(String(header.id)) ? { archived: true } : {}),
       directory: directories?.get(header.id) ?? { path: null, available: false, reason: '读不到这个会话的目录。' },
       ...(withUsage && familyUsage?.has(header.id)
         ? { familyUsage: usagePayload({ usage: familyUsage.get(header.id), complete: true, lastActivityAt: null }) }
