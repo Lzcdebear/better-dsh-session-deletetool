@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.5
+
+**Republish of 0.7.4.**
+
+- Identical to 0.7.4: archived conversations are marked in the bulk dialog and gain “已归档 / 未归档” filters.
+- The version moved on because 0.7.4 shipped a tag but never a GitHub release; 0.7.5 gives the tag, the release and the npm package one number.
+
 ## 0.7.4
 
 **Archived conversations are marked in the bulk dialog.**
